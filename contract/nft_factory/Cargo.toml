@@ -10,7 +10,6 @@ description = "ERC721 NFT Factory built with Stylus"
 alloy-primitives = "=0.8.20"
 alloy-sol-types = "=0.8.20"
 stylus-sdk = "0.9.0"
-hex = { version = "0.4", default-features = false }
 
 [dev-dependencies]
 alloy-primitives = { version = "=0.8.20", features = ["sha3-keccak"] }
@@ -25,6 +24,8 @@ default = ["mini-alloc"]
 export-abi = ["stylus-sdk/export-abi"]
 debug = ["stylus-sdk/debug"]
 mini-alloc = ["stylus-sdk/mini-alloc"]
+erc721 = []
+factory = []
 
 [[bin]]
 name = "erc721-nft-factory"
@@ -38,7 +39,4 @@ codegen-units = 1
 strip = true
 lto = true
 panic = "abort"
-
-# If you need to reduce the binary size, it is advisable to try other
-# optimization levels, such as "s" and "z"
-opt-level = 3
+opt-level = "z"
