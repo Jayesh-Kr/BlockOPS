@@ -45,15 +45,9 @@ export default function CustomEdge({
             style={{
               position: "absolute",
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-              background: "white",
-              padding: "4px 8px",
-              borderRadius: 4,
-              fontSize: 12,
-              fontWeight: 500,
               pointerEvents: "all",
-              border: "1px solid #e2e8f0",
             }}
-            className="nodrag nopan"
+            className="nodrag nopan bg-card text-card-foreground border border-border rounded px-2 py-1 text-xs font-medium"
           >
             {data.label}
           </div>

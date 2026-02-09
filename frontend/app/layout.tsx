@@ -6,16 +6,20 @@ import { Providers } from "./providers";
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
+  display: "swap",
+  fallback: ["system-ui", "arial"],
 });
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+  display: "swap",
+  fallback: ["monospace"],
 });
 
 export const metadata: Metadata = {
-  title: "N8NRollUPAgent Builder",
-  description: "Build your own N8NRollUPagents with ease.",
+  title: "BlockOps Agent Builder",
+  description: "Build your own BlockOps agents with ease.",
 };
 
 export default function RootLayout({

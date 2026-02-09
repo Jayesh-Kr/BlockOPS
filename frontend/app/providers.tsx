@@ -1,6 +1,7 @@
 'use client'
 
 import { PrivyProvider } from '@privy-io/react-auth'
+import { Toaster } from '@/components/ui/toaster'
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID
@@ -13,18 +14,16 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <PrivyProvider
       appId={privyAppId}
       config={{
-        loginMethods: ['email', 'wallet', 'google', 'twitter', 'discord', 'github'],
+        loginMethods: ['email', 'wallet', 'google', 'github'],
         appearance: {
           theme: 'dark',
-        },
-        embeddedWallets: {
-          ethereum: {
-            createOnLogin: 'users-without-wallets',
-          },
+          accentColor: '#1a1a1a',
+          logo: undefined,
         },
       }}
     >
       {children}
+      <Toaster />
     </PrivyProvider>
   )
 }

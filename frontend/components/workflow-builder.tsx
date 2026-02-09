@@ -31,6 +31,7 @@ import { AgentNode } from "./nodes/agent-node"
 import { generateNodeId, createNode } from "@/lib/workflow-utils"
 import type { WorkflowNode } from "@/lib/types"
 import { AIChatModal } from "./ai-chat-modal"
+import { UserProfile } from "./user-profile"
 import { useAuth } from "@/lib/auth"
 import { createAgent, getAgentById, updateAgent } from "@/lib/agents"
 import { workflowToTools, toolsToWorkflow } from "@/lib/workflow-converter"
@@ -110,7 +111,7 @@ const createAgentNode = (): Node => ({
 
 export default function WorkflowBuilder({ agentId }: WorkflowBuilderProps) {
   const router = useRouter()
-  const { user, authenticated } = useAuth()
+  const { user, authenticated, logout } = useAuth()
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const [nodes, setNodes, onNodesChange] = useNodesState([createAgentNode()])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
@@ -443,17 +444,23 @@ export default function WorkflowBuilder({ agentId }: WorkflowBuilderProps) {
                     onClick={() => setIsAIChatOpen(true)}
                     size="lg"
                     variant="default"
-                    className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 shadow-lg font-semibold"
+                    className="bg-foreground text-background hover:bg-foreground/90 shadow-lg font-semibold"
                   >
                     Create with AI
                   </Button>
                 </div>
               </Panel>
               <Panel position="top-right">
-                <Button onClick={handleSaveClick} size="lg" variant="outline" disabled={loadingAgent}>
-                  <Save className="h-5 w-5 mr-2" />
-                  {agentId ? "Update Agent" : "Save Agent"}
-                </Button>
+                <div className="flex gap-2 items-center">
+                  <Button onClick={handleSaveClick} size="lg" variant="outline" disabled={loadingAgent}>
+                    <Save className="h-5 w-5 mr-2" />
+                    {agentId ? "Update Agent" : "Save Agent"}
+                  </Button>
+                  <UserProfile onLogout={() => {
+                    logout()
+                    router.push("/")
+                  }} />
+                </div>
               </Panel>
             </ReactFlow>
           </ReactFlowProvider>
@@ -522,7 +529,7 @@ export default function WorkflowBuilder({ agentId }: WorkflowBuilderProps) {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleConfirmExit}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
+              className="bg-foreground text-background hover:bg-foreground/90"
             >
               Exit
             </AlertDialogAction>

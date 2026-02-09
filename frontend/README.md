@@ -1,48 +1,30 @@
-# N8NRollUP - FrontendThis is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# BlockOps - Frontend
 
+This is the frontend application for BlockOps, built with [Next.js](https://nextjs.org).
 
+## Features
 
-This is the frontend application for the N8NRollUP, built with [Next.js](https://nextjs.org).## Getting Started
+- 🎨 **Visual Drag & Drop Workflow Builder** - Create blockchain automation workflows with an intuitive visual interface
+- 🤖 **AI-Powered Agent Generation** - Generate agents using AI based on your requirements
+- 🔗 **Blockchain Integration** - Interact with BlockOps testnet smart contracts
+- 🛠️ **10+ Blockchain Tools** - Token transfers, swaps, NFT/Token deployment, DAO creation, airdrops, and more
+- 💼 **Wallet Management** - Create agent wallets or import existing ones
+- 📊 **Real-time Updates** - See your workflows execute in real-time
+- 🔍 **Contract Explorer** - Interact with any deployed smart contract like a block explorer (NEW!)
 
+## New: Contract Explorer
 
+The Contract Explorer allows you to interact with any deployed smart contract by simply entering its address. Features include:
 
-## FeaturesFirst, run the development server:
+- **Automatic ABI Fetching** - Load contract functions from verified contracts
+- **Read Functions** - Query contract state without gas costs
+- **Write Functions** - Execute transactions with your connected wallet
+- **Function Discovery** - View all available contract functions with parameters
+- **Transaction Tracking** - Get transaction hashes and explorer links
 
+[📖 Read the full Contract Explorer documentation](./CONTRACT_EXPLORER.md)
 
-
-- 🎨 **Visual Drag & Drop Workflow Builder** - Create blockchain automation workflows with an intuitive visual interface```bash
-
-- 🤖 **AI-Powered Agent Generation** - Generate agents using AI based on your requirementsnpm run dev
-
-- 🔗 **Blockchain Integration** - Interact with N8NRollUPtestnet smart contracts# or
-
-- 🛠️ **10+ Blockchain Tools** - Token transfers, swaps, NFT/Token deployment, DAO creation, airdrops, and moreyarn dev
-
-- 💼 **Wallet Management** - Create agent wallets or import existing ones# or
-
-- 📊 **Real-time Updates** - See your workflows execute in real-timepnpm dev
-
-# or
-
-## Getting Startedbun dev
-
-```
-
-### Prerequisites
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-- Node.js 18+ 
-
-- npm, yarn, pnpm, or bunYou can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-
-
-### InstallationThis project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-
-
-1. Install dependencies:## Learn More
+## Getting Started
 
 
 
@@ -116,7 +98,7 @@ frontend/
 
 - [Next.js Documentation](https://nextjs.org/docs)
 - [React Flow Documentation](https://reactflow.dev)
-- [N8NRollUPNetwork](https://somnia.network)
+- [BlockOps Network](https://somnia.network)
 
 ## Deploy on Vercel
 

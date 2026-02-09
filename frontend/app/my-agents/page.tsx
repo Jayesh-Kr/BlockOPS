@@ -5,11 +5,12 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card"
-import { Bot, MessageCircle, Plus, LogOut, Loader2, MoreVertical, Download, Copy, Check } from "lucide-react"
+import { Bot, MessageCircle, Plus, LogOut, Loader2, MoreVertical, Download, Copy, Check, FileCode } from "lucide-react"
 import { useAuth } from "@/lib/auth"
 import { getAgentsByUserId, deleteAgent } from "@/lib/agents"
 import type { Agent } from "@/lib/supabase"
 import { AgentWalletModal } from "@/components/agent-wallet"
+import { UserProfile } from "@/components/user-profile"
 import { toast } from "@/components/ui/use-toast"
 import {
   AlertDialog,
@@ -37,7 +38,7 @@ import {
 
 export default function MyAgents() {
   const router = useRouter()
-  const { ready, authenticated, user, logout, loading: authLoading } = useAuth()
+  const { ready, authenticated, user, logout, loading: authLoading, isWalletLogin } = useAuth()
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -97,7 +98,7 @@ export default function MyAgents() {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center">
         <div className="text-center">
-          <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
+          <Loader2 className="h-12 w-12 animate-spin text-foreground mx-auto" />
           <p className="mt-4 text-muted-foreground">Loading...</p>
         </div>
       </main>
@@ -109,53 +110,56 @@ export default function MyAgents() {
   }
 
   return (
-    <main className="min-h-screen" style={{ backgroundImage: 'url(/hero-bg.svg)', backgroundSize: 'cover', backgroundPosition: 'center 80px', backgroundRepeat: 'no-repeat' }}>
-      <div className="container mx-auto px-4 py-8">
+    <main className="min-h-screen bg-linear-to-br from-background via-background to-muted/20">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8 max-w-7xl">
         {/* Header */}
-        <div className="mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="mb-8 lg:mb-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">
-              <span className="bg-gradient-to-r from-[#AD00FF] to-[#333BFF] text-transparent bg-clip-text block md:inline">My Agents</span>
+            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight">
+              <span className="bg-linear-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">My Agents</span>
             </h1>
-            <p className="text-muted-foreground mt-2">
-              Manage and interact with your N8NRollUPagents
+            <p className="text-muted-foreground mt-2 text-sm sm:text-base">
+              Manage and interact with your BlockOps agents
             </p>
           </div>
-          <div className="flex gap-2">
-            <Button asChild size="lg" className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 shadow-lg font-semibold">
+          <div className="flex gap-2 items-center flex-wrap">
+            <Button asChild size="lg" variant="outline" className="font-semibold border-2 hover:bg-accent/50 transition-all shadow-sm">
+              <Link href="/contract-explorer">
+                <FileCode className="h-5 w-5 mr-2" />
+                Contract Explorer
+              </Link>
+            </Button>
+            <Button asChild size="lg" className="bg-foreground text-background hover:bg-foreground/90 font-semibold shadow-lg hover:shadow-xl transition-all">
               <Link href="/agent-builder">
                 <Plus className="h-5 w-5 mr-2" />
                 Create New Agent
               </Link>
             </Button>
-            <AgentWalletModal open={walletModalOpen} onOpenChange={setWalletModalOpen} />
-            <Button onClick={logout} variant="outline" size="lg">
-              <LogOut className="h-5 w-5 mr-2" />
-              Logout
-            </Button>
+            <AgentWalletModal open={walletModalOpen} onOpenChange={setWalletModalOpen} hideButton={isWalletLogin} />
+            <UserProfile onLogout={logout} />
           </div>
         </div>
 
         {/* Agents Grid */}
         {loading ? (
           <div className="flex items-center justify-center py-16">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <Loader2 className="h-8 w-8 animate-spin text-foreground" />
           </div>
         ) : agents.length > 0 ? (
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:gap-5 md:gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {agents.map((agent) => (
               <Card
                 key={agent.id}
-                className="transition-all hover:shadow-md hover:border-primary/50"
+                className="group transition-all duration-200 hover:shadow-xl hover:shadow-foreground/5 hover:border-foreground/30 hover:-translate-y-1"
               >
-                <CardHeader>
+                <CardHeader className="pb-4">
                   <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3 flex-1">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
-                        <Bot className="h-5 w-5 text-primary" />
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-foreground/10 group-hover:bg-foreground/20 transition-colors shrink-0">
+                        <Bot className="h-6 w-6 text-foreground" />
                       </div>
-                      <div className="flex-1">
-                        <CardTitle className="text-lg">{agent.name}</CardTitle>
+                      <div className="flex-1 min-w-0">
+                        <CardTitle className="text-lg truncate">{agent.name}</CardTitle>
                       </div>
                     </div>
                     <DropdownMenu>
@@ -190,30 +194,30 @@ export default function MyAgents() {
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
-                  <CardDescription className="mt-2">
+                  <CardDescription className="mt-2 line-clamp-2">
                     {agent.description || "No description"}
                   </CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <div className="text-xs text-muted-foreground">
+                <CardContent className="pb-4">
+                  <div className="text-xs text-muted-foreground bg-muted/50 px-3 py-2 rounded-lg">
                     {agent.tools.length} tool(s) configured
                   </div>
                 </CardContent>
                 <CardFooter className="border-t pt-4 flex gap-2">
                         <Button
                           variant="default"
-                          className="flex-1"
+                          className="flex-1 font-semibold"
                           onClick={(e) => {
                             e.stopPropagation()
                             router.push(`/agent/${agent.id}/chat`)
                           }}
                         >
                           <MessageCircle className="h-4 w-4 mr-2" />
-                          Chat with Agent
+                          Chat
                         </Button>
                   <Button
                     variant="outline"
-                    className="flex-1"
+                    className="flex-1 font-semibold"
                     onClick={(e) => {
                       e.stopPropagation()
                       setSelectedAgentForExport(agent)
@@ -221,20 +225,22 @@ export default function MyAgents() {
                     }}
                   >
                     <Download className="h-4 w-4 mr-2" />
-                    Export Agent
+                    Export
                   </Button>
                 </CardFooter>
               </Card>
             ))}
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <Bot className="h-16 w-16 text-muted-foreground mb-4" />
-            <h3 className="text-xl font-semibold mb-2">No agents yet</h3>
-            <p className="text-muted-foreground mb-6 max-w-md">
-              Create your first N8NRollUPagent to get started with workflow automation
+          <div className="flex flex-col items-center justify-center py-16 lg:py-24 text-center">
+            <div className="bg-muted/50 p-8 rounded-full mb-6">
+              <Bot className="h-20 w-20 text-muted-foreground" />
+            </div>
+            <h3 className="text-2xl font-bold mb-3">No agents yet</h3>
+            <p className="text-muted-foreground mb-8 max-w-md text-sm sm:text-base">
+              Create your first BlockOps agent to get started with workflow automation
             </p>
-            <Button asChild size="lg">
+            <Button asChild size="lg" className="shadow-lg font-semibold">
               <Link href="/agent-builder">
                 <Plus className="h-5 w-5 mr-2" />
                 Create Your First Agent
@@ -254,7 +260,7 @@ export default function MyAgents() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete} className="bg-primary text-primary-foreground">
+            <AlertDialogAction onClick={confirmDelete} className="bg-foreground text-background hover:bg-foreground/90">
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -262,7 +268,7 @@ export default function MyAgents() {
       </AlertDialog>
 
       <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
-        <DialogContent className="!max-w-[95vw] !w-[95vw] max-h-[90vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+        <DialogContent className="max-w-[95vw]! w-[95vw]! max-h-[90vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
           <DialogHeader>
             <DialogTitle>Export Agent: {selectedAgentForExport?.name}</DialogTitle>
             <DialogDescription>
@@ -292,7 +298,7 @@ export default function MyAgents() {
                   }}
                 >
                   {copiedItem === "api_key" ? (
-                    <Check className="h-3 w-3 text-green-500" />
+                    <Check className="h-3 w-3 text-foreground" />
                   ) : (
                     <Copy className="h-3 w-3" />
                   )}
@@ -311,6 +317,114 @@ export default function MyAgents() {
                   <li><code className="bg-muted px-1 py-0.5 rounded">api_key</code>: Your agent's API key (shown above)</li>
                   <li><code className="bg-muted px-1 py-0.5 rounded">user_message</code>: The message you want to send to the agent</li>
                 </ul>
+              </div>
+            </div>
+
+            {/* API Key Documentation */}
+            <div className="space-y-2">
+              <label className="text-sm font-semibold">API Key Documentation</label>
+              <div className="space-y-4 text-sm">
+                {/* What is the API Key */}
+                <div className="p-3 bg-muted border rounded-md">
+                  <h4 className="font-semibold mb-2">What is the API Key?</h4>
+                  <p className="text-muted-foreground leading-relaxed">
+                    The API key is a unique 32-character identifier that authenticates requests to your agent. 
+                    It's automatically generated when you create an agent and allows external applications to 
+                    interact with your agent programmatically.
+                  </p>
+                </div>
+
+                {/* How to Use */}
+                <div className="p-3 bg-muted border rounded-md">
+                  <h4 className="font-semibold mb-2">How to Use</h4>
+                  <ul className="space-y-2 text-muted-foreground">
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">1.</span>
+                      <span><strong>Copy your API key</strong> from above (click the copy button)</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">2.</span>
+                      <span><strong>Include it in your requests</strong> as the <code className="bg-muted px-1 py-0.5 rounded">api_key</code> parameter</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">3.</span>
+                      <span><strong>Send POST requests</strong> to <code className="bg-muted px-1 py-0.5 rounded">https://somnia-agent-builder.vercel.app/api/agent/chat</code></span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">4.</span>
+                      <span><strong>Receive responses</strong> with agent replies and tool execution results</span>
+                    </li>
+                  </ul>
+                </div>
+
+                {/* Security Best Practices */}
+                <div className="p-3 bg-muted border rounded-md">
+                  <h4 className="font-semibold mb-2">Security Best Practices</h4>
+                  <ul className="space-y-2 text-muted-foreground">
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">•</span>
+                      <span><strong>Never expose</strong> your API key in client-side code or public repositories</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">•</span>
+                      <span><strong>Store securely</strong> in environment variables or secure vaults</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">•</span>
+                      <span><strong>Don't share</strong> your API key publicly or commit it to version control</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">•</span>
+                      <span><strong>Rotate regularly</strong> by deleting and recreating your agent if compromised</span>
+                    </li>
+                  </ul>
+                </div>
+
+                {/* Request Parameters */}
+                <div className="p-3 bg-muted border rounded-md">
+                  <h4 className="font-semibold mb-2">Request Parameters</h4>
+                  <div className="space-y-2 text-muted-foreground">
+                    <div className="border-b border-border pb-2">
+                      <code className="bg-muted px-2 py-1 rounded font-semibold">api_key</code>
+                      <span className="ml-2 text-xs bg-muted px-2 py-0.5 rounded border">required</span>
+                      <p className="mt-1 text-xs">Your unique 32-character API key (string)</p>
+                    </div>
+                    <div>
+                      <code className="bg-muted px-2 py-1 rounded font-semibold">user_message</code>
+                      <span className="ml-2 text-xs bg-muted px-2 py-0.5 rounded border">required</span>
+                      <p className="mt-1 text-xs">The message/instruction you want to send to the agent (string)</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Response Structure */}
+                <div className="p-3 bg-muted border rounded-md">
+                  <h4 className="font-semibold mb-2">Response Structure</h4>
+                  <div className="space-y-2 text-muted-foreground text-xs">
+                    <div>
+                      <code className="bg-muted px-2 py-1 rounded font-semibold">agent_response</code>
+                      <p className="mt-1">The agent's natural language response to your message</p>
+                    </div>
+                    <div>
+                      <code className="bg-muted px-2 py-1 rounded font-semibold">tool_calls</code>
+                      <p className="mt-1">Array of tools the agent called during execution</p>
+                    </div>
+                    <div>
+                      <code className="bg-muted px-2 py-1 rounded font-semibold">results</code>
+                      <p className="mt-1">Array of results from each tool execution</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Rate Limits & Usage */}
+                <div className="p-3 bg-muted border rounded-md">
+                  <h4 className="font-semibold mb-2">Rate Limits & Usage</h4>
+                  <p className="text-muted-foreground text-xs leading-relaxed">
+                    Each API key is unique to your agent. Monitor your usage through the agent dashboard. 
+                    For high-volume applications, consider implementing client-side rate limiting and error handling 
+                    to ensure reliable operation.
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -348,7 +462,7 @@ export default function MyAgents() {
                 >
                   {copiedItem === "curl" ? (
                     <>
-                      <Check className="h-4 w-4 mr-2 text-green-500" />
+                      <Check className="h-4 w-4 mr-2 text-foreground" />
                       Copied
                     </>
                   ) : (
@@ -409,7 +523,7 @@ console.log(data);`
                 >
                   {copiedItem === "javascript" ? (
                     <>
-                      <Check className="h-4 w-4 mr-2 text-green-500" />
+                      <Check className="h-4 w-4 mr-2 text-foreground" />
                       Copied
                     </>
                   ) : (
