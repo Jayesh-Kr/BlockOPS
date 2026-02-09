@@ -2,6 +2,8 @@
 //! Stylus ERC721 NFT Factory
 //!
 //! A TRUE factory contract that allows ANY user to deploy their own NFT collections.
+//! This uses a minimal proxy/clone pattern to deploy independent NFT contracts.
+//! 
 //! Each user can create independent NFT collections with custom:
 //! - Name
 //! - Symbol
@@ -13,6 +15,11 @@
 //! User A → creates NFT Collection A (Apes, APE, ipfs://apes/)
 //! User B → creates NFT Collection B (Punks, PNK, ipfs://punks/)
 //! User C → creates NFT Collection C (Cats, CAT, ipfs://cats/)
+//!
+//! DEPLOYMENT INSTRUCTIONS:
+//! 1. First deploy the Erc721 contract as a template
+//! 2. Then deploy NftFactory with the Erc721 template address
+//! 3. Users call createCollection() which uses CREATE2 to deploy clones
 //!
 //! The program is ABI-equivalent with Solidity ERC721.
 //! To export the ABI, run `cargo stylus export-abi`.
@@ -27,8 +34,11 @@ extern crate alloc;
 
 use alloc::{string::{String, ToString}, vec, vec::Vec};
 use stylus_sdk::{
-    alloy_primitives::{Address, U256},
+    alloy_primitives::{Address, U256, B256},
     alloy_sol_types::{sol, SolError},
+    call::RawCall,
+    deploy::RawDeploy,
+    storage::StorageCache,
     prelude::*,
 };
 
@@ -40,6 +50,7 @@ sol_storage! {
         string base_uri;
         uint256 next_token_id;
         address creator;
+        bool initialized;
         
         mapping(uint256 => address) owners;
         mapping(address => uint256) balances;
@@ -52,9 +63,10 @@ sol_storage! {
 sol_storage! {
     #[entrypoint]
     pub struct NftFactory {
+        address implementation;
         uint256 collection_count;
         mapping(uint256 => address) collections;
-        mapping(address => address) creator_to_collection;
+        mapping(address => address[]) creator_to_collections;
         mapping(address => uint256) collection_to_id;
     }
 }
@@ -62,6 +74,7 @@ sol_storage! {
 // Factory Events
 sol! {
     event CollectionCreated(address indexed creator, address indexed collection_address, string name, string symbol, string base_uri, uint256 collection_id);
+    event ImplementationUpdated(address indexed old_implementation, address indexed new_implementation);
 }
 
 // ERC721 Events
@@ -82,6 +95,9 @@ sol! {
     error TransferToZeroAddress();
     error CollectionAlreadyExists(address creator);
     error InvalidCollectionAddress(address collection);
+    error AlreadyInitialized();
+    error DeploymentFailed();
+    error InvalidImplementation();
 }
 
 // ============================================
@@ -90,6 +106,20 @@ sol! {
 
 #[public]
 impl NftFactory {
+    /// Initialize the factory with an implementation contract address
+    pub fn initialize(&mut self, implementation: Address) -> Result<(), Vec<u8>> {
+        if self.implementation.get() != Address::ZERO {
+            return Err(AlreadyInitialized {}.abi_encode());
+        }
+        
+        if implementation == Address::ZERO {
+            return Err(InvalidImplementation {}.abi_encode());
+        }
+        
+        self.implementation.set(implementation);
+        Ok(())
+    }
+
     /// Creates a new NFT collection for the caller
     /// Each user can create their own collection with custom parameters
     pub fn create_collection(
@@ -99,11 +129,10 @@ impl NftFactory {
         base_uri: String,
     ) -> Result<Address, Vec<u8>> {
         let creator = self.vm().msg_sender();
+        let implementation = self.implementation.get();
         
-        // Check if creator already has a collection (optional - remove if users can create multiple)
-        let existing = self.creator_to_collection.get(creator);
-        if existing != Address::ZERO {
-            return Err(CollectionAlreadyExists { creator }.abi_encode());
+        if implementation == Address::ZERO {
+            return Err(InvalidImplementation {}.abi_encode());
         }
 
         // Increment collection count
@@ -111,25 +140,34 @@ impl NftFactory {
         let new_collection_id = collection_id + U256::from(1);
         self.collection_count.set(new_collection_id);
 
-        // Generate collection address
-        let collection_address = self._generate_collection_address(creator, collection_id);
+        // Deploy new collection using CREATE2 for deterministic addresses
+        // This creates a minimal proxy (EIP-1167) that delegates to the implementation
+        let collection_address = self._deploy_clone(implementation, collection_id)?;
+        
+        // Initialize the newly deployed collection
+        self._initialize_collection(collection_address, name.clone(), symbol.clone(), base_uri.clone(), creator)?;
         
         // Store collection mapping
         self.collections.setter(collection_id).set(collection_address);
-        self.creator_to_collection.setter(creator).set(collection_address);
+        // Note: creator_to_collections would need proper dynamic array handling in production
         self.collection_to_id.setter(collection_address).set(collection_id);
 
         // Emit event
         log(self.vm(), CollectionCreated {
             creator,
             collection_address,
-            name: name.clone(),
-            symbol: symbol.clone(),
-            base_uri: base_uri.clone(),
+            name,
+            symbol,
+            base_uri,
             collection_id,
         });
 
         Ok(collection_address)
+    }
+
+    /// Returns the implementation contract address
+    pub fn get_implementation(&self) -> Address {
+        self.implementation.get()
     }
 
     /// Returns the total number of collections created
@@ -140,11 +178,6 @@ impl NftFactory {
     /// Returns the collection address for a given collection ID
     pub fn get_collection_by_id(&self, collection_id: U256) -> Address {
         self.collections.get(collection_id)
-    }
-
-    /// Returns the collection address created by a specific user
-    pub fn get_collection_by_creator(&self, creator: Address) -> Address {
-        self.creator_to_collection.get(creator)
     }
 
     /// Returns the collection ID for a given collection address
@@ -167,20 +200,67 @@ impl NftFactory {
         collections
     }
 
-    // Internal function to generate deterministic collection address
-    fn _generate_collection_address(&self, creator: Address, collection_id: U256) -> Address {
-        // In a real implementation, this would deploy a new contract
-        // For now, we generate a pseudo-address based on creator and collection_id
-        let mut bytes = [0u8; 20];
-        let creator_bytes = creator.as_slice();
-        let id_bytes = collection_id.to_be_bytes::<32>();
+    // Internal function to deploy a minimal proxy (EIP-1167 clone)
+    fn _deploy_clone(&mut self, implementation: Address, salt: U256) -> Result<Address, Vec<u8>> {
+        // EIP-1167 minimal proxy bytecode
+        // This bytecode creates a proxy that delegates all calls to the implementation
+        let mut bytecode = vec![
+            0x36, 0x3d, 0x3d, 0x37, 0x3d, 0x3d, 0x3d, 0x36, 0x3d, 0x73,
+        ];
+        bytecode.extend_from_slice(implementation.as_slice());
+        bytecode.extend_from_slice(&[
+            0x5a, 0xf4, 0x3d, 0x82, 0x80, 0x3e, 0x90, 0x3d, 0x91, 0x60,
+            0x2b, 0x57, 0xfd, 0x5b, 0xf3,
+        ]);
+
+        // Use CREATE2 for deterministic address
+        let salt_bytes = B256::from(salt.to_be_bytes::<32>());
         
-        // Mix creator address and collection ID
-        for i in 0..20 {
-            bytes[i] = creator_bytes[i] ^ id_bytes[i + 12];
+        // Flush storage cache before deployment to prevent reentrancy issues
+        unsafe {
+            StorageCache::flush();
+            
+            let result = RawDeploy::new()
+                .salt(salt_bytes)
+                .deploy(&bytecode, U256::ZERO);
+            
+            match result {
+                Ok(addr) => Ok(addr),
+                Err(_) => Err(DeploymentFailed {}.abi_encode()),
+            }
+        }
+    }
+
+    // Internal function to initialize a deployed collection
+    fn _initialize_collection(
+        &self,
+        collection_address: Address,
+        name: String,
+        symbol: String,
+        base_uri: String,
+        creator: Address,
+    ) -> Result<(), Vec<u8>> {
+        // Define the initialize function interface
+        sol! {
+            function initialize(string name, string symbol, string baseUri, address creator);
         }
         
-        Address::from(bytes)
+        // Encode the initialize call with all parameters
+        let call_data = initializeCall {
+            name,
+            symbol,
+            baseUri: base_uri,
+            creator,
+        }.abi_encode();
+        
+        let call = RawCall::new();
+        
+        unsafe {
+            match call.call(collection_address, &call_data) {
+                Ok(_) => Ok(()),
+                Err(_) => Err(DeploymentFailed {}.abi_encode()),
+            }
+        }
     }
 }
 
@@ -199,7 +279,7 @@ impl Erc721 {
         creator: Address,
     ) {
         // Only initialize once
-        if !self.name.get_string().is_empty() {
+        if self.initialized.get() {
             return;
         }
 
@@ -208,6 +288,7 @@ impl Erc721 {
         self.base_uri.set_str(&base_uri);
         self.next_token_id.set(U256::from(1)); // Start token IDs from 1
         self.creator.set(creator);
+        self.initialized.set(true);
     }
 
     /// Returns the creator of this collection
