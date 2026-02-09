@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import os
@@ -11,6 +12,15 @@ import uvicorn
 load_dotenv()
 
 app = FastAPI(title="AI Agent Builder - Arbitrum Sepolia Edition")
+
+# Add CORS middleware to allow requests from anywhere
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods
+    allow_headers=["*"],  # Allow all headers
+)
 
 # Configure Google Gemini
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -88,11 +98,12 @@ TOOL_DEFINITIONS = {
     },
     "fetch_price": {
         "name": "fetch_price",
-        "description": "Fetch the current price of any cryptocurrency or token. Requires a query string.",
+        "description": "Fetch the current price of any cryptocurrency. Supports queries like 'bitcoin', 'ethereum price', 'btc eth sol'. Returns real-time prices from CoinGecko API with 24h change, market cap, and volume data. If vsCurrency is not provided, it defaults to 'usd'.",
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Query string for token price (e.g., 'bitcoin current price')"}
+                "query": {"type": "string", "description": "Query string for cryptocurrency (e.g., 'bitcoin', 'ethereum price', 'btc eth sol')"},
+                "vsCurrency": {"type": "string", "description": "Currency to show price in (e.g., 'usd', 'eur', 'inr'). Defaults to 'usd' if not provided."}
             },
             "required": ["query"]
         },

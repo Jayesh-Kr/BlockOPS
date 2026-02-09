@@ -18,38 +18,10 @@ const BLOCKCHAIN_BACKEND_URL = process.env.NEXT_PUBLIC_BLOCKCHAIN_BACKEND_URL ||
 
 /**
  * Send a chat message to the AI agent
- * This goes through the Next.js API route which validates and forwards to n8n_agent_backend
+ * Sends request directly to AI Agent Backend (port 8000)
+ * The request format matches TEST_REQUESTS.md from n8n_agent_backend
  */
 export async function sendAgentChatMessage(
-  apiKey: string,
-  userMessage: string,
-  privateKey?: string
-): Promise<AgentChatResponse> {
-  const response = await fetch('/api/agent/chat', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      api_key: apiKey,
-      user_message: userMessage,
-      private_key: privateKey,
-    }),
-  })
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
-    throw new Error(errorData.error || `Request failed with status ${response.status}`)
-  }
-
-  return response.json()
-}
-
-/**
- * Direct call to AI Agent Backend (for testing/debugging)
- * Normally you should use sendAgentChatMessage which goes through the API route
- */
-export async function directAgentChat(
   tools: Array<{ tool: string; next_tool: string | null }>,
   userMessage: string,
   privateKey?: string
@@ -60,7 +32,7 @@ export async function directAgentChat(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      tools,
+      tools: tools,
       user_message: userMessage,
       private_key: privateKey,
     }),
@@ -68,11 +40,13 @@ export async function directAgentChat(
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
-    throw new Error(errorData.error || errorData.detail || 'Backend request failed')
+    throw new Error(errorData.error || errorData.detail || `Request failed with status ${response.status}`)
   }
 
   return response.json()
 }
+
+
 
 /**
  * Check health of AI Agent Backend

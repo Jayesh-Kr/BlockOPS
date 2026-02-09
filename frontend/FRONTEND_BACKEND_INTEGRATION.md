@@ -2,16 +2,14 @@
 
 ## Overview
 
-This document explains how the frontend is integrated with the two backend systems:
-1. **AI Agent Backend** (`n8n_agent_backend`) - Port 8000 - FastAPI
-2. **Blockchain Backend** (`backend`) - Port 3000 - Express.js
+This document explains how the frontend integrates directly with the AI Agent Backend:
+- **AI Agent Backend** (`n8n_agent_backend`) - Port 8000 - FastAPI + Google Gemini AI
+- **Blockchain Backend** (`backend`) - Port 3000 - Express.js (called by AI backend, not frontend)
 
 ## Architecture Flow
 
 ```
 User Browser (Next.js Frontend)
-       ↓
-Next.js API Route (/api/agent/chat)
        ↓
 AI Agent Backend (Port 8000) - Gemini AI orchestration
        ↓
@@ -19,6 +17,8 @@ Blockchain Backend (Port 3000) - Actual blockchain operations
        ↓
 Arbitrum Sepolia Blockchain
 ```
+
+**Note**: Frontend sends requests directly to port 8000, NOT through a Next.js API route.
 
 ## Setup Instructions
 
@@ -89,20 +89,22 @@ curl http://localhost:3000  # or 3001
 
 ### Frontend Files
 
-#### 1. `/frontend/app/api/agent/chat/route.ts`
-**Purpose**: Next.js API route that acts as a proxy between frontend and AI agent backend.
+#### 1. `/frontend/lib/backend.ts`
+**Purpose**: Backend service utility functions for direct API calls to port 8000.
 
-**What it does**:
-- Validates the agent's API key from the database
-- Retrieves agent configuration (tools)
-- Forwards the request to `n8n_agent_backend` at port 8000
-- Returns the AI response back to the frontend
+**Key Functions**:
+- `sendAgentChatMessage()` - Send chat message directly to AI agent backend (primary method)
+- `checkAgentBackendHealth()` - Check if AI agent backend is running
+- `checkBlockchainBackendHealth()` - Check if blockchain backend is running
+- `listAvailableTools()` - Get list of all available blockchain tools
 
-**Request Format**:
+**Request Format** (matching TEST_REQUESTS.md):
 ```typescript
-POST /api/agent/chat
+POST http://localhost:8000/agent/chat
 {
-  "api_key": "agent_api_key_from_database",
+  "tools": [
+    { "tool": "deploy_erc20", "next_tool": null }
+  ],
   "user_message": "Deploy a token called MyToken",
   "private_key": "0x..." // Optional: user's wallet private key
 }
@@ -111,58 +113,47 @@ POST /api/agent/chat
 **Response Format**:
 ```typescript
 {
-  "agent_response": "I've successfully deployed your token...",
+  "response": "I've successfully deployed your token...",
   "tool_calls": [
     {
-      "tool": "deploy_erc20",
-      "parameters": {
+      "tool_name": "deploy_erc20",
+      "tool_input": {
         "name": "MyToken",
         "symbol": "MTK",
         "initialSupply": "1000000"
-      }
-    }
-  ],
-  "results": [
-    {
-      "success": true,
-      "tool": "deploy_erc20",
-      "result": {
-        "tokenId": "0x...",
-        "transactionHash": "0x...",
-        ...
+      },
+      "tool_result": {
+        "success": true,
+        "txHash": "0x...",
+        "contractAddress": "0x...",
+        "tokenId": "0x..."
       }
     }
   ]
 }
 ```
 
-#### 2. `/frontend/lib/backend.ts`
-**Purpose**: Backend service utility functions for API calls.
-
-**Key Functions**:
-- `sendAgentChatMessage()` - Send chat message through Next.js API route (recommended)
-- `directAgentChat()` - Direct call to AI agent backend (for testing)
-- `checkAgentBackendHealth()` - Check if AI agent backend is running
-- `checkBlockchainBackendHealth()` - Check if blockchain backend is running
-- `listAvailableTools()` - Get list of all available blockchain tools
-
 **Usage Example**:
 ```typescript
-import { sendAgentChatMessage } from '@/lib/backend'
+import { sendAgentChatMessage } from '@/lib/backend';
+
+// Get agent's tools configuration from database
+const agent = await getAgentFromDatabase(agentId);
 
 const response = await sendAgentChatMessage(
-  agent.api_key,
-  "Transfer 1 ETH to 0x123...",
+  agent.tools,  // Pass the tools array from agent config
+  "Deploy a token called MyToken",
   userPrivateKey
-)
+);
 ```
+import { sendAgentChatMessage } from '@/lib/backend'
 
-#### 3. `/frontend/app/agent/[agentId]/chat/page.tsx`
+#### 2. `/frontend/app/agent/[agentId]/chat/page.tsx`
 **Purpose**: Chat interface for interacting with agents.
 
 **Key Features**:
 - Automatically retrieves user's private key from database if available
-- Sends messages through the backend service
+- Sends messages directly to AI Agent Backend on port 8000
 - Displays AI responses and transaction results
 - Removes private keys from displayed data for security
 
@@ -172,15 +163,18 @@ const response = await sendAgentChatMessage(
 const { dbUser } = useAuth()
 const privateKey = dbUser?.private_key || undefined
 
-// Send message to agent
+// Get agent's tools configuration
+const agent = await getAgentById(agentId)
+
+// Send message directly to AI backend
 const data = await sendAgentChatMessage(
-  agent.api_key,
+  agent.tools,  // Pass tools array
   userQuery,
   privateKey
 )
 ```
 
-#### 4. `/frontend/lib/wallet.ts`
+#### 3. `/frontend/lib/wallet.ts`
 **Purpose**: Wallet management utilities.
 
 **Key Functions**:
@@ -189,7 +183,7 @@ const data = await sendAgentChatMessage(
 - `getAddressFromPrivateKey()` - Derive address from private key
 - `isValidPrivateKey()` - Validate private key format
 
-#### 5. `/frontend/lib/agents.ts`
+#### 4. `/frontend/lib/agents.ts`
 **Purpose**: Agent management utilities.
 
 **Key Functions**:
@@ -204,47 +198,26 @@ const data = await sendAgentChatMessage(
 ### 1. User Action (Frontend)
 ```tsx
 // User types in chat: "Deploy a token called MyToken with 1M supply"
-// Chat page calls:
+// Get agent configuration with tools array
+const agent = await getAgentById(agentId)
+
+// Send directly to AI Agent Backend
 const response = await sendAgentChatMessage(
-  agent.api_key,
+  agent.tools,  // e.g., [{ tool: "deploy_erc20", next_tool: null }]
   "Deploy a token called MyToken with 1M supply",
   userPrivateKey
 )
 ```
 
-### 2. Next.js API Route (`/api/agent/chat`)
-```typescript
-// Validate API key and get agent configuration
-const agent = await getAgentByApiKey(api_key)
-
-// Forward to AI agent backend
-const response = await fetch('http://localhost:8000/agent/chat', {
-  method: 'POST',
-  body: JSON.stringify({
-    tools: agent.tools,  // e.g., [{ tool: "deploy_erc20", next_tool: null }]
-    user_message: "Deploy a token called MyToken with 1M supply",
-    private_key: "0x..."
-  })
-})
-```
-
-### 3. AI Agent Backend (`n8n_agent_backend`)
+### 2. AI Agent Backend (Port 8000)
 ```python
-# Gemini AI parses the request and determines:
-# - Tool to use: deploy_erc20
-# - Parameters: name="MyToken", symbol="MTK", initialSupply="1000000"
-
-# Call blockchain backend
-response = requests.post('http://localhost:3000/token/deploy', json={
-    "privateKey": "0x...",
-    "name": "MyToken",
-    "symbol": "MTK",
-    "initialSupply": "1000000",
-    "decimals": 18
-})
-```
-
-### 4. Blockchain Backend (`backend`)
+# Receives request at /agent/chat
+# Uses Google Gemini to understand intent
+# Calls Blockchain Backend on port 3000
+response = requests.post('http://localhost:3000/deploy-erc20', {
+  "private_key": private_key,
+  "name": "MyToken",
+### 3. Blockchain Backend (`backend` - Port 3000)
 ```javascript
 // Execute actual blockchain transaction
 const tx = await tokenFactory.createToken(
@@ -254,26 +227,27 @@ const tx = await tokenFactory.createToken(
   initialSupply
 )
 
-// Return result
+// Return result to AI Agent Backend
 return {
   success: true,
   tokenId: "0x...",
   transactionHash: tx.hash,
   blockNumber: receipt.blockNumber,
   gasUsed: receipt.gasUsed,
+  contractAddress: "0x...",
   ...
 }
 ```
 
-### 5. Response Flow (Back to Frontend)
+### 4. Response Flow (Back to Frontend)
 ```
-Blockchain Backend → AI Agent Backend → Next.js API Route → Frontend Chat Page
+Blockchain Backend (port 3000) → AI Agent Backend (port 8000) → Frontend
 ```
 
 The frontend displays:
 - AI-generated response: "I've successfully deployed your token MyToken..."
 - Transaction hash with explorer link
-- Token ID and details
+- Token ID and contract address
 
 ## Security Considerations
 
@@ -341,21 +315,28 @@ cd n8n_agent_backend
 python main.py
 ```
 
-#### 2. "Backend request failed"
+#### 2. "Blockchain backend not responding"
 **Solution**: Ensure `backend` is running on port 3000
 ```bash
 cd backend
 npm start
 ```
 
-#### 3. "Invalid API key"
-**Solution**: Verify the agent exists in the database with a valid API key
+#### 3. "Agent tools not configured"
+**Solution**: Verify the agent has tools array configured in the database:
+```sql
+-- Check agent configuration
+SELECT id, name, tools FROM agents WHERE id = 'your-agent-id';
+```
 
 #### 4. "Transaction failed"
 **Solution**: 
 - Check wallet has enough ETH for gas
 - Verify contract addresses in `backend/.env`
 - Check RPC connection
+
+#### 5. "CORS errors in browser"
+**Solution**: Ensure AI Agent Backend allows requests from your frontend origin (check main.py CORS settings)
 
 ### Debug Mode
 

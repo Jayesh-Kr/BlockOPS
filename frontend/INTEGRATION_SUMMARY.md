@@ -2,54 +2,50 @@
 
 ## ✅ Integration Complete
 
-The frontend has been successfully integrated with both backend services:
-- **AI Agent Backend** (`n8n_agent_backend`) running on port 8000
-- **Blockchain Backend** (`backend`) running on port 3000
+The frontend has been successfully integrated to communicate directly with the AI Agent Backend on port 8000, which then communicates with the Blockchain Backend on port 3000.
+
+## 🔄 Correct Request Flow
+
+```
+User Browser → Frontend (port 3000/3001) → AI Agent Backend (port 8000) → Blockchain Backend (port 3000) → Arbitrum Sepolia
+```
 
 ## 📋 What Was Implemented
 
-### 1. API Route Handler
-**File**: `frontend/app/api/agent/chat/route.ts`
-- Acts as a proxy between frontend and AI agent backend
-- Validates agent API keys from database
-- Forwards requests to `n8n_agent_backend`
-- Handles errors gracefully
-
-### 2. Backend Service Utilities
+### 1. Backend Service Utilities
 **File**: `frontend/lib/backend.ts`
-- `sendAgentChatMessage()` - Primary function for sending messages
-- `directAgentChat()` - Direct backend access (for testing)
+- `sendAgentChatMessage()` - Sends requests directly to `http://localhost:8000/agent/chat`
 - `checkAgentBackendHealth()` - Health check for AI backend
 - `checkBlockchainBackendHealth()` - Health check for blockchain backend
 - `listAvailableTools()` - Get available blockchain tools
 
-### 3. Type Definitions
-**File**: `frontend/lib/types.ts`
-- `AgentChatRequest` - Request structure
-- `AgentChatResponse` - Response structure
-- `ToolCall` - Tool execution details
-- `ToolResult` - Tool execution results
-- `BackendHealthResponse` - Health check response
+**Request Format** (matching TEST_REQUESTS.md):
+```typescript
+{
+  tools: [
+    { tool: "deploy_erc20", next_tool: null }
+  ],
+  user_message: "Deploy a token called MyToken",
+  private_key: "0x..."  // Optional
+}
+```
 
-### 4. Chat Page Integration
+### 2. Chat Page Integration
 **File**: `frontend/app/agent/[agentId]/chat/page.tsx`
 - Automatically retrieves user's private key from database
+- Sends `agent.tools` array directly to backend
 - Uses `sendAgentChatMessage()` from backend service
 - Displays AI responses and blockchain transaction results
-- Removes private keys from displayed data for security
 
-### 5. Environment Configuration
+### 3. API Documentation Updated
 **Files**: 
-- `frontend/.env.example` - Template for environment variables
-- Environment variables added:
-  - `NEXT_PUBLIC_AI_AGENT_BACKEND_URL` - AI agent backend URL (default: http://localhost:8000)
-  - `NEXT_PUBLIC_BLOCKCHAIN_BACKEND_URL` - Blockchain backend URL (default: http://localhost:3000)
+- `frontend/app/api-docs/page.tsx` - Updated with correct endpoint and format
+- `frontend/app/my-agents/page.tsx` - Updated export examples
 
-### 6. Documentation
-**Files Created**:
-- `frontend/FRONTEND_BACKEND_INTEGRATION.md` - Complete integration guide
-- `frontend/INTEGRATION_CHECKLIST.md` - Quick setup checklist
-- `frontend/INTEGRATION_SUMMARY.md` - This file
+All documentation now shows:
+- Correct endpoint: `http://localhost:8000/agent/chat`
+- Correct request format with `tools` array
+- No API key needed (tools array identifies the agent)
 
 ## 🔄 Complete Request Flow
 

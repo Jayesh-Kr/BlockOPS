@@ -11,6 +11,7 @@ import { getAgentsByUserId, deleteAgent } from "@/lib/agents"
 import type { Agent } from "@/lib/supabase"
 import { AgentWalletModal } from "@/components/agent-wallet"
 import { UserProfile } from "@/components/user-profile"
+import { PrivateKeySetupModal } from "@/components/private-key-setup-modal"
 import { toast } from "@/components/ui/use-toast"
 import {
   AlertDialog,
@@ -38,7 +39,7 @@ import {
 
 export default function MyAgents() {
   const router = useRouter()
-  const { ready, authenticated, user, logout, loading: authLoading, isWalletLogin } = useAuth()
+  const { ready, authenticated, user, logout, loading: authLoading, isWalletLogin, showPrivateKeySetup, setShowPrivateKeySetup, syncUser } = useAuth()
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -311,26 +312,27 @@ export default function MyAgents() {
               <label className="text-sm font-semibold">How to Use</label>
               <div className="space-y-3 text-sm text-muted-foreground">
                 <p>
-                  Make a POST request to <code className="bg-muted px-1 py-0.5 rounded">/api/agent/chat</code> with the following body:
+                  Make a POST request to <code className="bg-muted px-1 py-0.5 rounded">http://localhost:8000/agent/chat</code> with the following body:
                 </p>
                 <ul className="list-disc list-inside space-y-1 ml-2">
-                  <li><code className="bg-muted px-1 py-0.5 rounded">api_key</code>: Your agent's API key (shown above)</li>
+                  <li><code className="bg-muted px-1 py-0.5 rounded">tools</code>: Array of tools configured for this agent</li>
                   <li><code className="bg-muted px-1 py-0.5 rounded">user_message</code>: The message you want to send to the agent</li>
+                  <li><code className="bg-muted px-1 py-0.5 rounded">private_key</code>: (Optional) Your wallet private key for blockchain operations</li>
                 </ul>
               </div>
             </div>
 
-            {/* API Key Documentation */}
+            {/* API Documentation */}
             <div className="space-y-2">
-              <label className="text-sm font-semibold">API Key Documentation</label>
+              <label className="text-sm font-semibold">API Documentation</label>
               <div className="space-y-4 text-sm">
-                {/* What is the API Key */}
+                {/* Agent Configuration */}
                 <div className="p-3 bg-muted border rounded-md">
-                  <h4 className="font-semibold mb-2">What is the API Key?</h4>
+                  <h4 className="font-semibold mb-2">Agent Configuration</h4>
                   <p className="text-muted-foreground leading-relaxed">
-                    The API key is a unique 32-character identifier that authenticates requests to your agent. 
-                    It's automatically generated when you create an agent and allows external applications to 
-                    interact with your agent programmatically.
+                    This agent has {selectedAgentForExport?.tools?.length || 0} tool(s) configured. 
+                    When calling the API, you need to include the complete tools array that defines what operations 
+                    your agent can perform. The tools are stored in your agent configuration.
                   </p>
                 </div>
 
@@ -340,15 +342,15 @@ export default function MyAgents() {
                   <ul className="space-y-2 text-muted-foreground">
                     <li className="flex items-start gap-2">
                       <span className="font-semibold shrink-0">1.</span>
-                      <span><strong>Copy your API key</strong> from above (click the copy button)</span>
+                      <span><strong>Get agent tools</strong> from your agent configuration (see examples below)</span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="font-semibold shrink-0">2.</span>
-                      <span><strong>Include it in your requests</strong> as the <code className="bg-muted px-1 py-0.5 rounded">api_key</code> parameter</span>
+                      <span><strong>Include tools array</strong> in your request body</span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="font-semibold shrink-0">3.</span>
-                      <span><strong>Send POST requests</strong> to <code className="bg-muted px-1 py-0.5 rounded">https://somnia-agent-builder.vercel.app/api/agent/chat</code></span>
+                      <span><strong>Send POST requests</strong> to <code className="bg-muted px-1 py-0.5 rounded">http://localhost:8000/agent/chat</code></span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="font-semibold shrink-0">4.</span>
@@ -385,14 +387,19 @@ export default function MyAgents() {
                   <h4 className="font-semibold mb-2">Request Parameters</h4>
                   <div className="space-y-2 text-muted-foreground">
                     <div className="border-b border-border pb-2">
-                      <code className="bg-muted px-2 py-1 rounded font-semibold">api_key</code>
-                      <span className="ml-2 text-xs bg-muted px-2 py-0.5 rounded border">required</span>
-                      <p className="mt-1 text-xs">Your unique 32-character API key (string)</p>
+                      <code className="bg-muted px-2 py-1 rounded font-semibold">tools</code>
+                      <span className="ml-2 text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200">required</span>
+                      <p className="mt-1 text-xs">Array of tool objects with tool name and next_tool (array)</p>
+                    </div>
+                    <div className="border-b border-border pb-2">
+                      <code className="bg-muted px-2 py-1 rounded font-semibold">user_message</code>
+                      <span className="ml-2 text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200">required</span>
+                      <p className="mt-1 text-xs">The message/instruction you want to send to the agent (string)</p>
                     </div>
                     <div>
-                      <code className="bg-muted px-2 py-1 rounded font-semibold">user_message</code>
-                      <span className="ml-2 text-xs bg-muted px-2 py-0.5 rounded border">required</span>
-                      <p className="mt-1 text-xs">The message/instruction you want to send to the agent (string)</p>
+                      <code className="bg-muted px-2 py-1 rounded font-semibold">private_key</code>
+                      <span className="ml-2 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded border border-green-200">optional</span>
+                      <p className="mt-1 text-xs">Your wallet private key for blockchain operations (string)</p>
                     </div>
                   </div>
                 </div>
@@ -433,11 +440,12 @@ export default function MyAgents() {
               <label className="text-sm font-semibold">cURL Example</label>
               <div className="relative">
                 <pre className="p-4 bg-muted rounded-md border overflow-x-auto text-xs">
-                  <code>{`curl -X POST https://somnia-agent-builder.vercel.app/api/agent/chat \\
+                  <code>{`curl -X POST http://localhost:8000/agent/chat \\
   -H "Content-Type: application/json" \\
   -d '{
-    "api_key": "${selectedAgentForExport?.api_key || 'YOUR_API_KEY'}",
-    "user_message": "your_message_here"
+    "tools": ${JSON.stringify(selectedAgentForExport?.tools || [{tool: "deploy_erc20", next_tool: null}], null, 2).split('\n').map((line, i) => i === 0 ? line : '    ' + line).join('\n')},
+    "user_message": "Deploy a token called MyToken",
+    "private_key": "YOUR_PRIVATE_KEY"
   }'`}</code>
                 </pre>
                 <Button
@@ -445,11 +453,12 @@ export default function MyAgents() {
                   size="sm"
                   className="absolute top-2 right-2"
                   onClick={() => {
-                    const curlCommand = `curl -X POST https://somnia-agent-builder.vercel.app/api/agent/chat \\
+                    const curlCommand = `curl -X POST http://localhost:8000/agent/chat \\
   -H "Content-Type: application/json" \\
   -d '{
-    "api_key": "${selectedAgentForExport?.api_key || 'YOUR_API_KEY'}",
-    "user_message": "your_message_here"
+    "tools": ${JSON.stringify(selectedAgentForExport?.tools || [{tool: "deploy_erc20", next_tool: null}])},
+    "user_message": "Deploy a token called MyToken",
+    "private_key": "YOUR_PRIVATE_KEY"
   }'`
                     navigator.clipboard.writeText(curlCommand)
                     setCopiedItem("curl")
@@ -480,14 +489,15 @@ export default function MyAgents() {
               <label className="text-sm font-semibold">JavaScript Example</label>
               <div className="relative">
                 <pre className="p-4 bg-muted rounded-md border overflow-x-auto text-xs">
-                  <code>{`const response = await fetch('https://somnia-agent-builder.vercel.app/api/agent/chat', {
+                  <code>{`const response = await fetch('http://localhost:8000/agent/chat', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
   },
   body: JSON.stringify({
-    api_key: '${selectedAgentForExport?.api_key || 'YOUR_API_KEY'}',
-    user_message: 'your_message_here'
+    tools: ${JSON.stringify(selectedAgentForExport?.tools || [{tool: "deploy_erc20", next_tool: null}])},
+    user_message: 'Deploy a token called MyToken',
+    private_key: 'YOUR_PRIVATE_KEY'
   })
 });
 
@@ -499,14 +509,15 @@ console.log(data);`}</code>
                   size="sm"
                   className="absolute top-2 right-2"
                   onClick={() => {
-                    const jsCode = `const response = await fetch('https://somnia-agent-builder.vercel.app/api/agent/chat', {
+                    const jsCode = `const response = await fetch('http://localhost:8000/agent/chat', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
   },
   body: JSON.stringify({
-    api_key: '${selectedAgentForExport?.api_key || 'YOUR_API_KEY'}',
-    user_message: 'your_message_here'
+    tools: ${JSON.stringify(selectedAgentForExport?.tools || [{tool: "deploy_erc20", next_tool: null}])},
+    user_message: 'Deploy a token called MyToken',
+    private_key: 'YOUR_PRIVATE_KEY'
   })
 });
 
@@ -563,6 +574,16 @@ console.log(data);`
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Private Key Setup Modal */}
+      {authenticated && user && (
+        <PrivateKeySetupModal
+          open={showPrivateKeySetup}
+          onOpenChange={setShowPrivateKeySetup}
+          userId={user.id}
+          onComplete={syncUser}
+        />
+      )}
     </main>
   )
 }

@@ -11,17 +11,19 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Copy, Check, LogOut, User as UserIcon } from "lucide-react"
+import { Copy, Check, LogOut, User as UserIcon, Key } from "lucide-react"
 import { useAuth } from "@/lib/auth"
 import { toast } from "@/components/ui/use-toast"
+import { PrivateKeySetupModal } from "./private-key-setup-modal"
 
 interface UserProfileProps {
   onLogout: () => void
 }
 
 export function UserProfile({ onLogout }: UserProfileProps) {
-  const { user, dbUser, isWalletLogin, privyWalletAddress } = useAuth()
+  const { user, dbUser, isWalletLogin, privyWalletAddress, syncUser } = useAuth()
   const [copied, setCopied] = useState(false)
+  const [showPrivateKeyModal, setShowPrivateKeyModal] = useState(false)
 
   // Get wallet address - check multiple sources
   const getWalletAddress = () => {
@@ -82,72 +84,87 @@ export function UserProfile({ onLogout }: UserProfileProps) {
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="relative h-10 w-10 rounded-full">
-          <Avatar className="h-10 w-10">
-            <AvatarFallback className="bg-foreground text-background">
-              <UserIcon className="h-5 w-5" />
-            </AvatarFallback>
-          </Avatar>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent className="w-64" align="end" forceMount>
-        <DropdownMenuLabel className="font-normal">
-          <div className="flex flex-col space-y-1">
-            <p className="text-sm font-medium leading-none">Account</p>
-            {user?.email?.address && (
-              <p className="text-xs leading-none text-muted-foreground">
-                {user.email.address}
-              </p>
-            )}
-          </div>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        
-        {walletAddress ? (
-          <>
-            <DropdownMenuItem 
-              className="flex flex-col items-start gap-1 cursor-pointer" 
-              onClick={copyWalletAddress}
-            >
-              <div className="flex items-center justify-between w-full">
-                <div className="flex items-center gap-2">
-                  <UserIcon className="h-4 w-4" />
-                  <span className="text-xs font-medium">Wallet Address</span>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" className="relative h-10 w-10 rounded-full">
+            <Avatar className="h-10 w-10">
+              <AvatarFallback className="bg-foreground text-background">
+                <UserIcon className="h-5 w-5" />
+              </AvatarFallback>
+            </Avatar>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="w-64" align="end" forceMount>
+          <DropdownMenuLabel className="font-normal">
+            <div className="flex flex-col space-y-1">
+              <p className="text-sm font-medium leading-none">Account</p>
+              {user?.email?.address && (
+                <p className="text-xs leading-none text-muted-foreground">
+                  {user.email.address}
+                </p>
+              )}
+            </div>
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          
+          {walletAddress ? (
+            <>
+              <DropdownMenuItem 
+                className="flex flex-col items-start gap-1 cursor-pointer" 
+                onClick={copyWalletAddress}
+              >
+                <div className="flex items-center justify-between w-full">
+                  <div className="flex items-center gap-2">
+                    <UserIcon className="h-4 w-4" />
+                    <span className="text-xs font-medium">Agent Wallet</span>
+                  </div>
+                  {copied ? (
+                    <Check className="h-3 w-3 text-foreground" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
                 </div>
-                {copied ? (
-                  <Check className="h-3 w-3 text-foreground" />
-                ) : (
-                  <Copy className="h-3 w-3" />
-                )}
-              </div>
-              <code className="text-xs text-muted-foreground font-mono break-all">
-                {walletAddress}
-              </code>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-          </>
-        ) : (
-          <>
-            <DropdownMenuItem disabled className="flex flex-col items-start gap-1">
-              <div className="flex items-center gap-2">
-                <UserIcon className="h-4 w-4" />
-                <span className="text-xs font-medium">No Wallet Connected</span>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Add a wallet to get started
-              </p>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-          </>
-        )}
-        
-        <DropdownMenuItem onClick={onLogout}>
-          <LogOut className="mr-2 h-4 w-4" />
-          <span>Log out</span>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+                <code className="text-xs text-muted-foreground font-mono break-all">
+                  {walletAddress}
+                </code>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          ) : (
+            <>
+              <DropdownMenuItem 
+                className="flex flex-col items-start gap-1 cursor-pointer"
+                onClick={() => setShowPrivateKeyModal(true)}
+              >
+                <div className="flex items-center gap-2">
+                  <Key className="h-4 w-4" />
+                  <span className="text-xs font-medium">Set Up Agent Wallet</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Add your private key to enable transactions
+                </p>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
+          
+          <DropdownMenuItem onClick={onLogout}>
+            <LogOut className="mr-2 h-4 w-4" />
+            <span>Log out</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {/* Private Key Setup Modal */}
+      {user && (
+        <PrivateKeySetupModal
+          open={showPrivateKeyModal}
+          onOpenChange={setShowPrivateKeyModal}
+          userId={user.id}
+          onComplete={syncUser}
+        />
+      )}
+    </>
   )
 }

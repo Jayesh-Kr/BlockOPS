@@ -1,128 +1,202 @@
+const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { GEMINI_API_KEY } = require('../config/constants');
 
-// Initialize Gemini client
+// Initialize Gemini client for natural language parsing
 let geminiClient = null;
 if (GEMINI_API_KEY) {
   geminiClient = new GoogleGenerativeAI(GEMINI_API_KEY);
 }
 
-// System prompt for fetching token prices from natural language
-const PRICE_SYSTEM_PROMPT = `You are a cryptocurrency price data assistant. Your task is to understand natural language queries about cryptocurrency prices and fetch the current prices from the web.
+// CoinGecko API base URL (free tier, no API key required)
+const COINGECKO_API_BASE = 'https://api.coingecko.com/api/v3';
 
-INSTRUCTIONS:
-1. Parse the user's natural language query to identify which cryptocurrencies they want prices for
-2. Understand queries like:
-   - "bitcoin price" → BTC
-   - "what's ethereum worth" → ETH
-   - "show me solana and cardano prices" → SOL, ADA
-   - "how much is dogecoin" → DOGE
-   - "prices for BTC, ETH, and BNB" → BTC, ETH, BNB
-   - "bitcoin ethereum solana" → BTC, ETH, SOL
-3. Search for the CURRENT/LIVE price of each identified token
-4. Return prices in USD
-5. Provide the price information in a clear and structured format
-6. Include price, 24h change percentage if available, and data source for each token
-7. Use reliable sources like CoinMarketCap, CoinGecko, or Binance
-
-Be accurate, understand the query intent, and use the most current prices available from authoritative sources.`;
+// Common cryptocurrency mappings
+const CRYPTO_MAPPINGS = {
+  'btc': 'bitcoin',
+  'bitcoin': 'bitcoin',
+  'eth': 'ethereum',
+  'ethereum': 'ethereum',
+  'usdt': 'tether',
+  'tether': 'tether',
+  'bnb': 'binancecoin',
+  'binance': 'binancecoin',
+  'sol': 'solana',
+  'solana': 'solana',
+  'xrp': 'ripple',
+  'ripple': 'ripple',
+  'ada': 'cardano',
+  'cardano': 'cardano',
+  'doge': 'dogecoin',
+  'dogecoin': 'dogecoin',
+  'avax': 'avalanche-2',
+  'avalanche': 'avalanche-2',
+  'dot': 'polkadot',
+  'polkadot': 'polkadot',
+  'matic': 'matic-network',
+  'polygon': 'matic-network',
+  'link': 'chainlink',
+  'chainlink': 'chainlink',
+  'uni': 'uniswap',
+  'uniswap': 'uniswap',
+  'arb': 'arbitrum',
+  'arbitrum': 'arbitrum',
+  'op': 'optimism',
+  'optimism': 'optimism'
+};
 
 /**
- * Token price endpoint - fetch current token prices using natural language queries
- * Uses Google Gemini AI with web search capability
+ * Parse natural language query to extract cryptocurrency names
+ */
+const parseCryptoQuery = async (query) => {
+  const lowerQuery = query.toLowerCase();
+  const foundCryptos = [];
+  
+  // First, try direct matching with our mapping
+  for (const [key, value] of Object.entries(CRYPTO_MAPPINGS)) {
+    if (lowerQuery.includes(key)) {
+      if (!foundCryptos.includes(value)) {
+        foundCryptos.push(value);
+      }
+    }
+  }
+  
+  // If we found cryptos, return them
+  if (foundCryptos.length > 0) {
+    return foundCryptos;
+  }
+  
+  // If no direct match and Gemini is available, use it to parse
+  if (geminiClient) {
+    try {
+      const model = geminiClient.getGenerativeModel({
+        model: 'gemini-2.0-flash-exp',
+        generationConfig: {
+          temperature: 0.1,
+        },
+      });
+
+      const result = await model.generateContent(
+        `Extract cryptocurrency names from this query: "${query}"\n\nReturn ONLY a comma-separated list of CoinGecko coin IDs (lowercase, no spaces). Examples: bitcoin, ethereum, solana\n\nIf you can't identify any cryptocurrencies, return "unknown".`
+      );
+
+      const response = await result.response;
+      const text = response.text().trim().toLowerCase();
+      
+      if (text !== 'unknown' && text.length > 0) {
+        return text.split(',').map(s => s.trim()).filter(s => s.length > 0);
+      }
+    } catch (error) {
+      console.error('Gemini parsing error:', error);
+    }
+  }
+  
+  // Default fallback to Bitcoin if nothing found
+  return ['bitcoin'];
+};
+
+/**
+ * Fetch price from CoinGecko API
+ */
+const fetchFromCoinGecko = async (coinIds, vsCurrency = 'usd') => {
+  try {
+    const ids = coinIds.join(',');
+    const url = `${COINGECKO_API_BASE}/simple/price`;
+    
+    const response = await axios.get(url, {
+      params: {
+        ids: ids,
+        vs_currencies: vsCurrency,
+        include_24hr_change: true,
+        include_market_cap: true,
+        include_24hr_vol: true
+      },
+      timeout: 10000
+    });
+
+    return response.data;
+  } catch (error) {
+    throw new Error(`CoinGecko API error: ${error.message}`);
+  }
+};
+
+/**
+ * Token price endpoint - fetch current token prices using CoinGecko API
  */
 const getTokenPrice = async (req, res) => {
   try {
-    const { query } = req.body;
+    const { query, vsCurrency = 'usd' } = req.body;
 
     // Validation
     if (!query) {
       return res.status(400).json({
         success: false,
         error: 'Query is required',
-        usage: 'Provide a natural language query like "bitcoin price" or "show me ethereum and solana prices"'
-      });
-    }
-
-    // Check if Gemini API key is configured
-    if (!geminiClient) {
-      return res.status(500).json({
-        success: false,
-        error: 'Gemini API key not configured',
-        message: 'Please set GEMINI_API_KEY in your .env file'
+        usage: 'Provide a query like "bitcoin price", "ethereum", or "btc eth sol"',
+        example: {
+          query: "bitcoin price",
+          vsCurrency: "usd"
+        }
       });
     }
 
     console.log('Fetching token prices for query:', query);
 
-    // Use Gemini with grounding (web search)
-    const model = geminiClient.getGenerativeModel({
-      model: 'gemini-2.0-flash-exp',
-      generationConfig: {
-        temperature: 0.2, // Lower temperature for more factual responses
-        topP: 0.8,
-        topK: 40,
-      },
-    });
+    // Parse the query to extract cryptocurrency names
+    const coinIds = await parseCryptoQuery(query);
+    
+    if (coinIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No cryptocurrencies identified in query',
+        query: query,
+        hint: 'Try queries like "bitcoin", "ethereum price", or "btc eth sol"'
+      });
+    }
 
-    // Enable Google Search grounding for real-time web data
-    const result = await model.generateContent({
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              text: `${PRICE_SYSTEM_PROMPT}\n\nUser Query: ${query}\n\nPlease search the web for current cryptocurrency prices and provide accurate, up-to-date information.`
-            }
-          ]
-        }
-      ],
-      tools: [
-        {
-          googleSearch: {} // Enable Google Search grounding
-        }
-      ]
-    });
+    console.log('Identified cryptocurrencies:', coinIds);
 
-    const response = await result.response;
-    const priceInfo = response.text();
+    // Fetch prices from CoinGecko
+    const priceData = await fetchFromCoinGecko(coinIds, vsCurrency);
 
-    // Extract grounding metadata if available
-    let sources = [];
-    if (response.candidates?.[0]?.groundingMetadata) {
-      const groundingMetadata = response.candidates[0].groundingMetadata;
-      if (groundingMetadata.groundingChunks) {
-        sources = groundingMetadata.groundingChunks.map(chunk => ({
-          title: chunk.web?.title || 'Web Source',
-          url: chunk.web?.uri || '',
-        }));
+    // Format response
+    const prices = [];
+    for (const coinId of coinIds) {
+      if (priceData[coinId]) {
+        const data = priceData[coinId];
+        prices.push({
+          coin: coinId,
+          price: data[vsCurrency],
+          currency: vsCurrency.toUpperCase(),
+          change_24h: data[`${vsCurrency}_24h_change`] || null,
+          market_cap: data[`${vsCurrency}_market_cap`] || null,
+          volume_24h: data[`${vsCurrency}_24h_vol`] || null
+        });
       }
+    }
+
+    if (prices.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No price data found for the requested cryptocurrencies',
+        queried_coins: coinIds
+      });
     }
 
     return res.json({
       success: true,
       query: query,
-      priceInfo: priceInfo,
-      sources: sources.length > 0 ? sources : undefined,
-      model: 'gemini-2.0-flash-exp',
-      note: 'Prices are fetched in real-time from the web using Google Gemini with Google Search grounding'
+      prices: prices,
+      source: 'CoinGecko API',
+      timestamp: new Date().toISOString()
     });
 
   } catch (error) {
     console.error('Token price error:', error);
     
-    // Handle specific Gemini API errors
-    let errorMessage = error.message;
-    if (error.message?.includes('API key')) {
-      errorMessage = 'Invalid Gemini API key. Please check your GEMINI_API_KEY in .env file';
-    } else if (error.message?.includes('quota')) {
-      errorMessage = 'Gemini API quota exceeded. Please try again later or upgrade your API plan';
-    }
-
     return res.status(500).json({
       success: false,
-      error: errorMessage,
-      details: error.response?.data || error.code
+      error: error.message || 'Failed to fetch token prices'
     });
   }
 };

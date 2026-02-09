@@ -69,15 +69,15 @@ export default function ApiDocs() {
               <ol className="space-y-3 text-muted-foreground">
                 <li className="flex items-start gap-2">
                   <span className="font-semibold shrink-0">1.</span>
-                  <span><strong>Copy your API key</strong> from the agent export dialog</span>
+                  <span><strong>Get your agent configuration</strong> including the tools array</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="font-semibold shrink-0">2.</span>
-                  <span><strong>Include it in your requests</strong> as the <code className="bg-background px-2 py-1 rounded border">api_key</code> parameter</span>
+                  <span><strong>Include tools array</strong> as the <code className="bg-background px-2 py-1 rounded border">tools</code> parameter</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="font-semibold shrink-0">3.</span>
-                  <span><strong>Send POST requests</strong> to <code className="bg-background px-2 py-1 rounded border">https://somnia-agent-builder.vercel.app/api/agent/chat</code></span>
+                  <span><strong>Send POST requests</strong> to <code className="bg-background px-2 py-1 rounded border">http://localhost:8000/agent/chat</code></span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="font-semibold shrink-0">4.</span>
@@ -93,17 +93,24 @@ export default function ApiDocs() {
             <div className="p-4 bg-muted border rounded-lg space-y-4">
               <div className="border-b border-border pb-3">
                 <div className="flex items-center gap-2 mb-2">
-                  <code className="bg-background px-3 py-1 rounded border font-semibold">api_key</code>
+                  <code className="bg-background px-3 py-1 rounded border font-semibold">tools</code>
                   <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200">required</span>
                 </div>
-                <p className="text-sm text-muted-foreground">Your unique 32-character API key (string)</p>
+                <p className="text-sm text-muted-foreground">Array of tool objects with tool name and next_tool (array)</p>
               </div>
-              <div>
+              <div className="border-b border-border pb-3">
                 <div className="flex items-center gap-2 mb-2">
                   <code className="bg-background px-3 py-1 rounded border font-semibold">user_message</code>
                   <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200">required</span>
                 </div>
                 <p className="text-sm text-muted-foreground">The message/instruction you want to send to the agent (string)</p>
+              </div>
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <code className="bg-background px-3 py-1 rounded border font-semibold">private_key</code>
+                  <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded border border-green-200">optional</span>
+                </div>
+                <p className="text-sm text-muted-foreground">Your wallet private key for blockchain operations (string)</p>
               </div>
             </div>
           </section>
@@ -113,22 +120,28 @@ export default function ApiDocs() {
             <h2 className="text-2xl font-bold">cURL Example</h2>
             <div className="relative">
               <pre className="p-4 bg-muted rounded-lg border overflow-x-auto text-sm">
-                <code>{`curl -X POST https://somnia-agent-builder.vercel.app/api/agent/chat \\
+                <code>{`curl -X POST http://localhost:8000/agent/chat \\
   -H "Content-Type: application/json" \\
   -d '{
-    "api_key": "YOUR_API_KEY",
-    "user_message": "your_message_here"
+    "tools": [
+      {"tool": "deploy_erc20", "next_tool": null}
+    ],
+    "user_message": "Deploy a token called MyToken",
+    "private_key": "YOUR_PRIVATE_KEY"
   }'`}</code>
               </pre>
               <Button
                 variant="ghost"
                 size="sm"
                 className="absolute top-2 right-2"
-                onClick={() => handleCopy(`curl -X POST https://somnia-agent-builder.vercel.app/api/agent/chat \\
+                onClick={() => handleCopy(`curl -X POST http://localhost:8000/agent/chat \\
   -H "Content-Type: application/json" \\
   -d '{
-    "api_key": "YOUR_API_KEY",
-    "user_message": "your_message_here"
+    "tools": [
+      {"tool": "deploy_erc20", "next_tool": null}
+    ],
+    "user_message": "Deploy a token called MyToken",
+    "private_key": "YOUR_PRIVATE_KEY"
   }'`, "curl")}
               >
                 {copiedItem === "curl" ? (
@@ -151,14 +164,17 @@ export default function ApiDocs() {
             <h2 className="text-2xl font-bold">JavaScript Example</h2>
             <div className="relative">
               <pre className="p-4 bg-muted rounded-lg border overflow-x-auto text-sm">
-                <code>{`const response = await fetch('https://somnia-agent-builder.vercel.app/api/agent/chat', {
+                <code>{`const response = await fetch('http://localhost:8000/agent/chat', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
   },
   body: JSON.stringify({
-    api_key: 'YOUR_API_KEY',
-    user_message: 'your_message_here'
+    tools: [
+      { tool: 'deploy_erc20', next_tool: null }
+    ],
+    user_message: 'Deploy a token called MyToken',
+    private_key: 'YOUR_PRIVATE_KEY'
   })
 });
 
@@ -169,14 +185,17 @@ console.log(data);`}</code>
                 variant="ghost"
                 size="sm"
                 className="absolute top-2 right-2"
-                onClick={() => handleCopy(`const response = await fetch('https://somnia-agent-builder.vercel.app/api/agent/chat', {
+                onClick={() => handleCopy(`const response = await fetch('http://localhost:8000/agent/chat', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
   },
   body: JSON.stringify({
-    api_key: 'YOUR_API_KEY',
-    user_message: 'your_message_here'
+    tools: [
+      { tool: 'deploy_erc20', next_tool: null }
+    ],
+    user_message: 'Deploy a token called MyToken',
+    private_key: 'YOUR_PRIVATE_KEY'
   })
 });
 

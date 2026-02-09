@@ -9,6 +9,8 @@ export function useAuth() {
   const { wallets } = useWallets()
   const [dbUser, setDbUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
+  const [showPrivateKeySetup, setShowPrivateKeySetup] = useState(false)
+  const [hasCheckedPrivateKey, setHasCheckedPrivateKey] = useState(false)
 
   // Check if user logged in via wallet
   const isWalletLogin = authenticated && wallets && wallets.length > 0
@@ -21,7 +23,10 @@ export function useAuth() {
     walletsCount: wallets?.length, 
     privyWalletAddress,
     dbUserWallet: dbUser?.wallet_address,
-    isWalletLogin 
+    dbUserPrivateKey: dbUser?.private_key ? 'EXISTS' : 'NULL',
+    isWalletLogin,
+    showPrivateKeySetup,
+    hasCheckedPrivateKey
   })
 
   useEffect(() => {
@@ -30,6 +35,8 @@ export function useAuth() {
     } else {
       setDbUser(null)
       setLoading(false)
+      // Reset the check when user logs out
+      setHasCheckedPrivateKey(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, authenticated, user])
@@ -74,7 +81,24 @@ export function useAuth() {
       if (existingUser) {
         // User exists, update if needed
         console.log('User found in database:', existingUser.id)
+        console.log('User private_key status:', {
+          has_private_key: !!existingUser.private_key,
+          private_key_value: existingUser.private_key ? 'EXISTS' : 'NULL',
+          hasCheckedPrivateKey,
+          showPrivateKeySetup
+        })
         setDbUser(existingUser)
+        
+        // Check if user needs to set up private key (only once per session)
+        if (!existingUser.private_key && !hasCheckedPrivateKey) {
+          console.log('🔑 TRIGGERING PRIVATE KEY SETUP MODAL')
+          setShowPrivateKeySetup(true)
+          setHasCheckedPrivateKey(true)
+        } else if (existingUser.private_key) {
+          console.log('✅ User already has private key, no modal needed')
+        } else if (hasCheckedPrivateKey) {
+          console.log('⏭️ Private key check already done this session')
+        }
       } else {
         // User doesn't exist, create new user
         console.log('Creating new user in database')
@@ -99,7 +123,12 @@ export function useAuth() {
           })
         } else {
           console.log('User created successfully:', newUser.id)
+          console.log('🔑 TRIGGERING PRIVATE KEY SETUP MODAL (NEW USER)')
           setDbUser(newUser)
+          
+          // Show private key setup modal for new users
+          setShowPrivateKeySetup(true)
+          setHasCheckedPrivateKey(true)
         }
       }
     } catch (error) {
@@ -129,5 +158,7 @@ export function useAuth() {
     syncUser,
     isWalletLogin,
     privyWalletAddress,
+    showPrivateKeySetup,
+    setShowPrivateKeySetup,
   }
 }

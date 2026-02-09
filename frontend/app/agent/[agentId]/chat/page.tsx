@@ -101,16 +101,17 @@ export default function AgentChatPage() {
     setIsLoading(true)
 
     try {
-      if (!agent.api_key) {
-        throw new Error("Agent API key not found")
+      if (!agent.tools || agent.tools.length === 0) {
+        throw new Error("Agent has no tools configured")
       }
 
       // Get private key from user's database record if available
       const privateKey = dbUser?.private_key || undefined
 
       // Use the backend service to send the message
+      // Pass agent.tools directly as required by the AI Agent Backend
       const data = await sendAgentChatMessage(
-        agent.api_key,
+        agent.tools,
         userQuery,
         privateKey
       )

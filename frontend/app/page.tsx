@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { useAuth } from "@/lib/auth"
 import { ArrowRight, Bot, Loader2 } from "lucide-react"
 import { UserProfile } from "@/components/user-profile"
+import { PrivateKeySetupModal } from "@/components/private-key-setup-modal"
 import FeaturesExpandableCards from "@/components/features-expandable-cards"
 import { Modal, ModalBody, ModalContent, ModalFooter, ModalTrigger } from "@/components/ui/animated-modal"
 import { motion, useInView, useSpring } from "motion/react"
@@ -75,7 +76,7 @@ function NumberTicker({
 }
 
 export default function Home() {
-  const { ready, authenticated, login, loading, logout } = useAuth()
+  const { ready, authenticated, login, loading, logout, user, showPrivateKeySetup, setShowPrivateKeySetup, syncUser } = useAuth()
   const [isLoggingIn, setIsLoggingIn] = useState(false)
   const [loadingLink, setLoadingLink] = useState<string | null>(null)
 
@@ -590,6 +591,17 @@ export default function Home() {
           </motion.div>
         </motion.div>
       </footer>
+
+      {/* Private Key Setup Modal */}
+      {console.log('Home Page - Modal Props:', { authenticated, hasUser: !!user, showPrivateKeySetup })}
+      {authenticated && user && (
+        <PrivateKeySetupModal
+          open={showPrivateKeySetup}
+          onOpenChange={setShowPrivateKeySetup}
+          userId={user.id}
+          onComplete={syncUser}
+        />
+      )}
     </div>
   )
 }

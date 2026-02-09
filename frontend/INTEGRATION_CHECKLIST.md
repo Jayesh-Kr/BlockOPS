@@ -43,8 +43,10 @@
 ## 🔄 Request Flow Summary
 
 ```
-User Input → Frontend Chat Page → /api/agent/chat → AI Agent Backend → Blockchain Backend → Blockchain
+User Input → Frontend Chat Page → AI Agent Backend (port 8000) → Blockchain Backend (port 3000) → Blockchain
 ```
+
+**Note**: Frontend sends requests directly to port 8000, NOT through a Next.js API route.
 
 ## 📝 Key Integration Points
 
@@ -56,38 +58,35 @@ import { sendAgentChatMessage } from '@/lib/backend'
 const { dbUser } = useAuth()
 const privateKey = dbUser?.private_key
 
-// Send message to agent
+// Get agent's tools configuration
+const agent = await getAgentById(agentId)
+
+// Send message directly to AI backend
 const response = await sendAgentChatMessage(
-  agent.api_key,
+  agent.tools,  // Pass tools array
   userMessage,
   privateKey
 )
 ```
 
-### 2. API Route (`app/api/agent/chat/route.ts`)
+### 2. Backend Service (`lib/backend.ts`)
 ```typescript
-// Validates agent API key
-const agent = await getAgentByApiKey(api_key)
-
-// Forwards to AI agent backend
-const response = await fetch(`${backendUrl}/agent/chat`, {
-  method: 'POST',
-  body: JSON.stringify({
-    tools: agent.tools,
-    user_message,
-    private_key
-  })
-})
-```
-
-### 3. Backend Service (`lib/backend.ts`)
-```typescript
-// Main function to send chat messages
 export async function sendAgentChatMessage(
-  apiKey: string,
+  tools: Array<{ tool: string; next_tool: string | null }>,
   userMessage: string,
   privateKey?: string
-): Promise<AgentChatResponse>
+) {
+  // Send directly to port 8000
+  const response = await fetch(`${AI_AGENT_BACKEND_URL}/agent/chat`, {
+    method: 'POST',
+    body: JSON.stringify({
+      tools,
+      user_message: userMessage,
+      private_key: privateKey
+    })
+  })
+  
+  return response.json()
 ```
 
 ## 🔧 Common Commands
@@ -113,11 +112,13 @@ curl http://localhost:3000         # Frontend (Next.js)
 
 ### Test Agent Endpoint
 ```bash
-curl -X POST http://localhost:3000/api/agent/chat \
+# Test AI Agent Backend directly
+curl -X POST http://localhost:8000/agent/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "api_key": "your_agent_api_key",
-    "user_message": "What is the current price of Bitcoin?"
+    "tools": [{"tool": "deploy_erc20", "next_tool": null}],
+    "user_message": "Deploy a token called MyToken",
+    "private_key": "YOUR_PRIVATE_KEY"
   }'
 ```
 
@@ -133,9 +134,10 @@ curl -X POST http://localhost:3000/api/agent/chat \
 | Error | Solution |
 |-------|----------|
 | "Cannot connect to AI agent backend" | Start `n8n_agent_backend` on port 8000 |
-| "Backend request failed" | Start `backend` on port 3000 |
-| "Invalid API key" | Verify agent exists in database |
+| "Blockchain backend not responding" | Start `backend` on port 3000 |
+| "Agent tools not configured" | Verify agent has tools array in database |
 | "Missing private key" | User needs to create/import wallet |
+| "CORS error" | Check AI Agent Backend CORS settings in main.py |
 
 ## 📦 File Structure
 

@@ -73,7 +73,8 @@ export function AIChatModal({ open, onOpenChange, onApplyWorkflow }: AIChatModal
     setCurrentAIResponse(null)
 
     try {
-      const response = await fetch('/api/create-workflow', {
+      const workflowBackendUrl = process.env.NEXT_PUBLIC_AI_WORKFLOW_BACKEND_URL || 'http://localhost:8001'
+      const response = await fetch(`${workflowBackendUrl}/create-workflow`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
