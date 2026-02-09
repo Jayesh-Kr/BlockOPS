@@ -15,6 +15,10 @@ import { useAuth } from "@/lib/auth"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { 
+  discoverContract, 
+  executeNaturalLanguageCommand 
+} from "@/lib/contract-backend"
 
 // Extend Window interface for ethereum
 declare global {
@@ -24,8 +28,10 @@ declare global {
 }
 
 interface ContractFunction {
+  index?: number
   name: string
   type: string
+  signature?: string
   stateMutability: string
   inputs: Array<{
     name: string
@@ -62,6 +68,8 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
   const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant', content: string }>>([])
   const [chatInput, setChatInput] = useState("")
   const [isChatLoading, setIsChatLoading] = useState(false)
+  const [useBackendDiscovery, setUseBackendDiscovery] = useState(true)
+  const [executionPlan, setExecutionPlan] = useState<any>(null)
 
   const isValidAddress = (address: string) => {
     return ethers.isAddress(address)
@@ -85,81 +93,85 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
     console.log("=== Starting contract load for:", contractAddress)
     
     try {
-      // Try to fetch ABI from Etherscan API
-      const provider = new ethers.JsonRpcProvider(
-        process.env.NEXT_PUBLIC_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com"
-      )
-      
-      console.log("Checking if contract exists on chain...")
-      const code = await provider.getCode(contractAddress)
-      console.log("Contract code length:", code.length)
-      
-      if (code === "0x") {
-        toast({
-          title: "Contract Not Found",
-          description: "No contract found at this address on Ethereum Sepolia",
-          variant: "destructive",
-        })
-        setIsLoading(false)
-        return
-      }
-
-      console.log("Contract exists! Fetching ABI from Etherscan...")
-      // Use Etherscan API V2 with chainid for Sepolia
-      const apiKey = process.env.NEXT_PUBLIC_ETHERSCAN_API_KEY || "YourApiKeyToken"
-      // For Sepolia, use mainnet API endpoint with chainid=11155111
-      const apiUrl = `https://api.etherscan.io/v2/api?chainid=11155111&module=contract&action=getabi&address=${contractAddress}&apikey=${apiKey}`
-      console.log("API URL:", apiUrl)
-      console.log("Using API Key:", apiKey.substring(0, 5) + "...")
-      
-      const response = await fetch(apiUrl)
-      console.log("Response status:", response.status, response.statusText)
-      
-      const data = await response.json()
-      console.log("Etherscan API V2 Response:", data)
-      
-      // V2 API response format
-      if (data.status === "1" && data.result) {
-        console.log("Result received, parsing ABI...")
+      if (useBackendDiscovery) {
+        // Use backend API for contract discovery
+        console.log("Using backend discovery API...")
+        const response = await discoverContract(contractAddress)
         
-        try {
-          // V2 API returns result as string containing JSON array
-          const abi = JSON.parse(data.result)
-          console.log("ABI parsed successfully! Functions found:", abi.length)
+        if (response.success && response.data) {
+          const { allFunctions, totalFunctions } = response.data
           
+          // Convert backend functions to component format
+          const functions: ContractFunction[] = allFunctions.map(func => ({
+            index: func.index,
+            name: func.name,
+            type: 'function',
+            signature: func.signature,
+            stateMutability: func.stateMutability,
+            inputs: func.inputs,
+            outputs: func.outputs,
+          }))
+          
+          // Create a minimal ABI from functions
+          const abi = functions.map(func => ({
+            name: func.name,
+            type: func.type,
+            stateMutability: func.stateMutability,
+            inputs: func.inputs,
+            outputs: func.outputs,
+          }))
+          
+          setContractABI(abi)
+          parseFunctions(abi)
+          
+          toast({
+            title: "Contract Loaded via Backend ✓",
+            description: `Successfully loaded ${totalFunctions} contract functions`,
+          })
+        }
+      } else {
+        // Fallback to direct Etherscan API
+        const provider = new ethers.JsonRpcProvider(
+          process.env.NEXT_PUBLIC_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com"
+        )
+        
+        console.log("Checking if contract exists on chain...")
+        const code = await provider.getCode(contractAddress)
+        console.log("Contract code length:", code.length)
+        
+        if (code === "0x") {
+          toast({
+            title: "Contract Not Found",
+            description: "No contract found at this address on Ethereum Sepolia",
+            variant: "destructive",
+          })
+          setIsLoading(false)
+          return
+        }
+
+        console.log("Contract exists! Fetching ABI from Etherscan...")
+        const apiKey = process.env.NEXT_PUBLIC_ETHERSCAN_API_KEY || "YourApiKeyToken"
+        const apiUrl = `https://api.etherscan.io/v2/api?chainid=11155111&module=contract&action=getabi&address=${contractAddress}&apikey=${apiKey}`
+        
+        const response = await fetch(apiUrl)
+        const data = await response.json()
+        
+        if (data.status === "1" && data.result) {
+          const abi = JSON.parse(data.result)
           setContractABI(abi)
           parseFunctions(abi)
           toast({
             title: "Contract Loaded ✓",
             description: `Successfully loaded ${abi.length} contract functions`,
           })
-        } catch (parseError) {
-          console.error("Failed to parse ABI:", parseError)
+        } else {
           setShowManualABI(true)
           toast({
-            title: "Error Parsing ABI",
-            description: "The ABI format is invalid. Please paste it manually below.",
+            title: "Contract Not Verified",
+            description: "Contract found but not verified. Please paste ABI manually.",
             variant: "destructive",
           })
         }
-      } else {
-        // If ABI not verified or other error
-        console.log("Contract not verified or error. Full response:", data)
-        setShowManualABI(true)
-        
-        let errorMessage = "Contract found but not verified on Etherscan."
-        if (data.message && data.message !== "OK") {
-          errorMessage = data.message
-        }
-        if (data.result && typeof data.result === "string" && !data.result.startsWith("[")) {
-          errorMessage += ` ${data.result}`
-        }
-        
-        toast({
-          title: "Contract Not Verified",
-          description: errorMessage + " Please paste ABI manually below.",
-          variant: "destructive",
-        })
       }
     } catch (error: any) {
       console.error("Error fetching contract:", error)
@@ -168,6 +180,11 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
         description: error.message || "Failed to fetch contract details",
         variant: "destructive",
       })
+      
+      // If backend fails, suggest manual ABI input
+      if (useBackendDiscovery) {
+        setShowManualABI(true)
+      }
     } finally {
       setIsLoading(false)
     }
@@ -436,20 +453,109 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
     setIsChatLoading(true)
 
     try {
-      // TODO: Replace with actual AI API call
-      // For now, just echo back with function suggestions
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      // Check if user has a private key (either agent wallet or Privy wallet)
+      const privateKey = dbUser?.private_key
       
-      const response = `I understand you want to interact with the contract. Here are the available functions:\n\n` +
-        `Read Functions: ${functions.read.map(f => f.name).join(', ')}\n\n` +
-        `Write Functions: ${functions.write.map(f => f.name).join(', ')}\n\n` +
-        `Please specify which function you'd like to call and with what parameters.`
-      
-      setChatMessages(prev => [...prev, { role: 'assistant', content: response }])
-    } catch (error) {
+      if (!privateKey) {
+        setChatMessages(prev => [...prev, { 
+          role: 'assistant', 
+          content: 'Please connect your wallet to execute contract functions via natural language.' 
+        }])
+        setIsChatLoading(false)
+        return
+      }
+
+      // First, get execution plan without confirming
+      const planResponse = await executeNaturalLanguageCommand(
+        contractAddress,
+        userMessage,
+        privateKey,
+        false // Don't execute yet, just get plan
+      )
+
+      if (planResponse.success && planResponse.data.executionPlan) {
+        const plan = planResponse.data.executionPlan
+        setExecutionPlan(plan)
+        
+        // Format execution plan for display
+        let planMessage = `I've analyzed your request:\n\n`
+        planMessage += `**Function:** ${plan.functionName}\n`
+        planMessage += `**Signature:** ${plan.signature}\n`
+        planMessage += `**Type:** ${plan.isReadOnly ? 'Read-Only' : 'Write (requires transaction)'}\n\n`
+        
+        if (plan.parameters && plan.parameters.length > 0) {
+          planMessage += `**Parameters:**\n`
+          plan.parameters.forEach((param: any) => {
+            planMessage += `- ${param.name} (${param.type}): ${param.rawValue}\n`
+          })
+          planMessage += `\n`
+        }
+        
+        planMessage += `**Reasoning:** ${plan.reasoning}\n\n`
+        planMessage += `Would you like me to execute this? Reply with "yes" or "execute" to proceed.`
+        
+        setChatMessages(prev => [...prev, { 
+          role: 'assistant', 
+          content: planMessage 
+        }])
+      }
+    } catch (error: any) {
+      console.error('AI Chat error:', error)
       setChatMessages(prev => [...prev, { 
         role: 'assistant', 
-        content: 'Sorry, I encountered an error processing your request.' 
+        content: `Error: ${error.message}` 
+      }])
+    } finally {
+      setIsChatLoading(false)
+    }
+  }
+
+  // Handle execution confirmation
+  const handleExecuteConfirmation = async () => {
+    if (!executionPlan || !dbUser?.private_key) return
+
+    setIsChatLoading(true)
+    setChatMessages(prev => [...prev, { role: 'user', content: 'yes, execute' }])
+
+    try {
+      // Execute with confirmation
+      const execResponse = await executeNaturalLanguageCommand(
+        contractAddress,
+        `Execute ${executionPlan.functionName}`, // Command doesn't matter now, backend uses plan
+        dbUser.private_key,
+        true // Confirm execution
+      )
+
+      if (execResponse.success && execResponse.data) {
+        let resultMessage = '✓ Execution successful!\n\n'
+        
+        if (execResponse.data.transaction) {
+          const tx = execResponse.data.transaction
+          resultMessage += `**Transaction Hash:** ${tx.hash}\n`
+          resultMessage += `**Block Number:** ${tx.blockNumber}\n`
+          resultMessage += `**Gas Used:** ${tx.gasUsed}\n`
+          resultMessage += `**Status:** ${tx.status}\n`
+          resultMessage += `**Explorer:** [View on Arbiscan](${tx.explorerUrl})`
+        } else if (execResponse.data.result) {
+          resultMessage += `**Result:** ${execResponse.data.result}`
+        }
+        
+        setChatMessages(prev => [...prev, { 
+          role: 'assistant', 
+          content: resultMessage 
+        }])
+        setExecutionPlan(null)
+        
+        toast({
+          title: "Execution Successful",
+          description: "Function executed via natural language",
+        })
+      }
+    } catch (error: any) {
+      console.error('Execution error:', error)
+      setChatMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: `Execution failed: ${error.message}` 
       }])
     } finally {
       setIsChatLoading(false)
@@ -754,27 +860,39 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
                     )}
                   </div>
                 </ScrollArea>
-                <div className="flex gap-2 pt-3 md:pt-4 border-t">
-                  <Input
-                    placeholder="Ask AI about the contract..."
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault()
-                        handleAIChatSubmit()
-                      }
-                    }}
-                    disabled={isChatLoading}
-                    className="text-sm"
-                  />
-                  <Button
-                    size="icon"
-                    onClick={handleAIChatSubmit}
-                    disabled={!chatInput.trim() || isChatLoading}
-                  >
-                    <Send className="h-4 w-4" />
-                  </Button>
+                <div className="flex flex-col gap-2 pt-3 md:pt-4 border-t">
+                  {executionPlan && (
+                    <Button
+                      onClick={handleExecuteConfirmation}
+                      disabled={isChatLoading}
+                      className="w-full bg-green-600 hover:bg-green-700"
+                    >
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                      Execute Function
+                    </Button>
+                  )}
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Ask AI about the contract..."
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          handleAIChatSubmit()
+                        }
+                      }}
+                      disabled={isChatLoading}
+                      className="text-sm"
+                    />
+                    <Button
+                      size="icon"
+                      onClick={handleAIChatSubmit}
+                      disabled={!chatInput.trim() || isChatLoading}
+                    >
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </CardContent>
             </Card>
