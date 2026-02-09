@@ -305,9 +305,9 @@ PINATA_API_KEY=
 PINATA_SECRET_KEY=
 ```
 
-## New Feature: AI-Powered Token Price Fetching
+## Feature: AI-Powered Token Price Fetching
 
-The backend now includes an AI-powered token price endpoint using **Google Gemini 2.0 Flash** with Google Search grounding. This provides real-time cryptocurrency price data through natural language queries.
+The backend includes an AI-powered token price endpoint using **Google Gemini 2.0 Flash** with Google Search grounding. This provides real-time cryptocurrency price data through natural language queries.
 
 ### Features:
 - 🤖 Natural language query support (e.g., "bitcoin price", "show me ethereum and solana")
