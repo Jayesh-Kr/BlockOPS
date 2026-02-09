@@ -1,0 +1,21 @@
+// Network and Contract Configuration
+require('dotenv').config();
+
+module.exports = {
+  // Network Configuration
+  ARBITRUM_SEPOLIA_RPC: 'https://sepolia-rollup.arbitrum.io/rpc',
+  NETWORK_NAME: 'Arbitrum Sepolia',
+  EXPLORER_BASE_URL: 'https://sepolia.arbiscan.io',
+  
+  // Contract Addresses
+  FACTORY_ADDRESS: process.env.TOKEN_FACTORY_ADDRESS || '0x0000000000000000000000000000000000000000',
+  NFT_FACTORY_ADDRESS: process.env.NFT_FACTORY_ADDRESS || '0x0000000000000000000000000000000000000000',
+  
+  // Server Configuration
+  PORT: process.env.PORT || 3000,
+  
+  // API Keys
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+  PINATA_API_KEY: process.env.PINATA_API_KEY || '',
+  PINATA_SECRET_KEY: process.env.PINATA_SECRET_KEY || ''
+};
