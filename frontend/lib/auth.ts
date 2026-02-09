@@ -6,7 +6,7 @@ import { supabase, type User } from './supabase'
 
 export function useAuth() {
   const { ready, authenticated, user, login, logout } = usePrivy()
-  const { connectWallet } = useWallets()
+  const { wallets } = useWallets()
   const [dbUser, setDbUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -21,10 +21,15 @@ export function useAuth() {
   }, [ready, authenticated, user])
 
   const syncUser = async () => {
-    if (!user?.id) return
+    if (!user?.id) {
+      console.warn('Cannot sync user: No user ID available')
+      return
+    }
 
     setLoading(true)
     try {
+      console.log('Syncing user with ID:', user.id)
+      
       // Check if user exists
       const { data: existingUser, error: fetchError } = await supabase
         .from('users')
@@ -36,14 +41,16 @@ export function useAuth() {
         // PGRST116 = "not found" (this is OK, we'll create the user)
         if (fetchError.code === 'PGRST116') {
           // User doesn't exist, continue to create
+          console.log('User not found in database, will create new user')
         } else {
           // Other error - log full details
-          console.error('Error fetching user:', {
+          console.error('Error fetching user:', fetchError)
+          console.error('Error details:', {
             message: fetchError.message,
             code: fetchError.code,
             details: fetchError.details,
             hint: fetchError.hint,
-            fullError: fetchError
+            userId: user.id
           })
           setLoading(false)
           return
@@ -52,9 +59,11 @@ export function useAuth() {
 
       if (existingUser) {
         // User exists, update if needed
+        console.log('User found in database:', existingUser.id)
         setDbUser(existingUser)
       } else {
         // User doesn't exist, create new user
+        console.log('Creating new user in database')
         const { data: newUser, error: createError } = await supabase
           .from('users')
           .insert({
@@ -66,14 +75,16 @@ export function useAuth() {
           .single()
 
         if (createError) {
-          console.error('Error creating user:', {
+          console.error('Error creating user:', createError)
+          console.error('Create error details:', {
             message: createError.message,
             code: createError.code,
             details: createError.details,
             hint: createError.hint,
-            fullError: createError
+            userId: user.id
           })
         } else {
+          console.log('User created successfully:', newUser.id)
           setDbUser(newUser)
         }
       }
@@ -85,20 +96,11 @@ export function useAuth() {
   }
 
   const connectMetaMask = async () => {
-    // Check if MetaMask is available
-    if (typeof window !== 'undefined' && (window as any).ethereum) {
-      try {
-        // Try to connect directly to MetaMask first
-        await (window as any).ethereum.request({ method: 'eth_requestAccounts' })
-        // Then use Privy's connectWallet for MetaMask
-        await connectWallet('metamask')
-      } catch (error) {
-        // Fallback to Privy's login modal
-        login()
-      }
-    } else {
-      // No MetaMask detected, use Privy login
-      login()
+    // Use Privy's login modal directly
+    try {
+      await login()
+    } catch (error) {
+      console.error('Login error:', error)
     }
   }
 
@@ -113,4 +115,3 @@ export function useAuth() {
     syncUser,
   }
 }
-

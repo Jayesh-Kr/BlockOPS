@@ -8,7 +8,7 @@
 
 -- 1. Create users table (if it doesn't exist)
 CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY,
+  id TEXT PRIMARY KEY, -- Privy DID (format: did:privy:xxxxx)
   private_key TEXT,
   wallet_address TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
 -- 2. Create agents table (if it doesn't exist)
 CREATE TABLE IF NOT EXISTS agents (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   description TEXT,
   api_key TEXT UNIQUE NOT NULL,

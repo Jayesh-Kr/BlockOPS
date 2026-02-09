@@ -7,6 +7,15 @@ import { useAuth } from "@/lib/auth"
 export default function Home() {
   const { ready, authenticated, login, loading } = useAuth()
 
+  const handleGetStarted = async () => {
+    console.log('Get Started clicked!')
+    try {
+      await login()
+    } catch (error) {
+      console.error('Login failed:', error)
+    }
+  }
+
   if (!ready || loading) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center">
@@ -50,7 +59,7 @@ export default function Home() {
               </Link>
             </Button>
           ) : (
-            <Button onClick={login} size="lg" className="text-lg px-8 py-6">
+            <Button onClick={handleGetStarted} size="lg" className="text-lg px-8 py-6">
               Get Started
             </Button>
           )}

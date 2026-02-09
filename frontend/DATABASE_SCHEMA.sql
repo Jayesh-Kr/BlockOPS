@@ -8,7 +8,7 @@
 -- ============================================
 -- Stores user information from Privy authentication
 CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY, -- Privy user ID
+  id TEXT PRIMARY KEY, -- Privy DID (format: did:privy:xxxxx)
   private_key TEXT, -- Encrypted private key for agent wallet (optional)
   wallet_address TEXT, -- Agent wallet address
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -24,7 +24,7 @@ CREATE INDEX IF NOT EXISTS idx_users_wallet_address ON users(wallet_address);
 -- Stores AI agents created by users
 CREATE TABLE IF NOT EXISTS agents (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   description TEXT,
   api_key TEXT UNIQUE NOT NULL, -- API key for agent access
@@ -48,7 +48,7 @@ CREATE INDEX IF NOT EXISTS idx_agents_created_at ON agents(created_at DESC);
 CREATE TABLE IF NOT EXISTS conversations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title TEXT, -- Auto-generated from first message
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -82,7 +82,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
 CREATE TABLE IF NOT EXISTS agent_executions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   user_message TEXT NOT NULL,
   agent_response TEXT,
   tool_calls_count INTEGER DEFAULT 0,
