@@ -110,23 +110,28 @@ export default function MyAgents() {
   }
 
   return (
-    <main className="min-h-screen" style={{ backgroundImage: 'url(/hero-bg.svg)', backgroundSize: 'cover', backgroundPosition: 'center 80px', backgroundRepeat: 'no-repeat' }}>
+    <main className="min-h-screen">
       <div className="container mx-auto px-4 py-8">
         {/* Header */}
         <div className="mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">
-              <span className="bg-gradient-to-r from-foreground to-foreground/70 text-transparent bg-clip-text block md:inline">My Agents</span>
+              <span className="text-foreground block md:inline">My Agents</span>
             </h1>
             <p className="text-muted-foreground mt-2">
               Manage and interact with your N8NRollUPagents
             </p>
           </div>
-          <div className="flex gap-2 items-center">
-            <Button asChild size="lg" className="bg-foreground text-background hover:bg-foreground/90 shadow-lg font-semibold">
+          <div className="flex gap-2 items-center flex-wrap">
+            <Button asChild size="lg" className="bg-foreground text-background hover:bg-foreground/90 font-semibold">
               <Link href="/agent-builder">
                 <Plus className="h-5 w-5 mr-2" />
                 Create New Agent
+              </Link>
+            </Button>
+            <Button asChild size="lg" variant="outline">
+              <Link href="/components-showcase">
+                View Components
               </Link>
             </Button>
             <AgentWalletModal open={walletModalOpen} onOpenChange={setWalletModalOpen} hideButton={isWalletLogin} />
