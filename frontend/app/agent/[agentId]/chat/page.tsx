@@ -12,7 +12,9 @@ import { toast } from "@/components/ui/use-toast"
 import { UserProfile } from "@/components/user-profile"
 import { useAuth } from "@/lib/auth"
 import { getAgentById } from "@/lib/agents"
+import { sendAgentChatMessage } from "@/lib/backend"
 import type { Agent } from "@/lib/supabase"
+import type { AgentChatResponse } from "@/lib/types"
 
 interface Message {
   id: string
@@ -22,24 +24,11 @@ interface Message {
   agentResponse?: AgentChatResponse
 }
 
-interface AgentChatResponse {
-  agent_response: string
-  tool_calls: Array<{
-    tool: string
-    parameters: Record<string, any>
-  }>
-  results: Array<{
-    success: boolean
-    tool: string
-    result: any
-  }>
-}
-
 export default function AgentChatPage() {
   const router = useRouter()
   const params = useParams()
   const agentId = params.agentId as string
-  const { logout } = useAuth()
+  const { logout, dbUser } = useAuth()
   
   const [agent, setAgent] = useState<Agent | null>(null)
   const [loadingAgent, setLoadingAgent] = useState(true)
@@ -116,23 +105,15 @@ export default function AgentChatPage() {
         throw new Error("Agent API key not found")
       }
 
-      const response = await fetch("/api/agent/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          api_key: agent.api_key,
-          user_message: userQuery,
-        }),
-      })
+      // Get private key from user's database record if available
+      const privateKey = dbUser?.private_key || undefined
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: "Unknown error" }))
-        throw new Error(errorData.error || `Request failed with status ${response.status}`)
-      }
-
-      const data: AgentChatResponse = await response.json()
+      // Use the backend service to send the message
+      const data = await sendAgentChatMessage(
+        agent.api_key,
+        userQuery,
+        privateKey
+      )
 
       // Remove privateKey/private_key fields from the response
       const cleanedData = removePrivateKeys(data) as AgentChatResponse

@@ -13,3 +13,37 @@ export interface Workflow {
   nodes: WorkflowNode[]
   edges: any[]
 }
+
+// Backend Integration Types
+export interface AgentChatRequest {
+  api_key: string
+  user_message: string
+  private_key?: string
+}
+
+export interface ToolCall {
+  tool: string
+  parameters: Record<string, any>
+}
+
+export interface ToolResult {
+  success: boolean
+  tool: string
+  result: any
+  error?: string
+}
+
+export interface AgentChatResponse {
+  agent_response: string
+  tool_calls: ToolCall[]
+  results: ToolResult[]
+}
+
+export interface BackendHealthResponse {
+  status: string
+  service?: string
+  blockchain?: string
+  ai_model?: string
+  backend_url?: string
+  network?: string
+}
