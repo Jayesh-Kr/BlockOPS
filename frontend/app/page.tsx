@@ -4,7 +4,7 @@ import Link from "next/link"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/lib/auth"
-import { ArrowRight } from "lucide-react"
+import { ArrowRight, Bot } from "lucide-react"
 import { UserProfile } from "@/components/user-profile"
 import FeaturesExpandableCards from "@/components/features-expandable-cards"
 import { Modal, ModalBody, ModalContent, ModalFooter, ModalTrigger } from "@/components/ui/animated-modal"
@@ -136,8 +136,8 @@ export default function Home() {
               <Link href="#integrations" className="text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">
                 Integrations
               </Link>
-              <Link href="#pricing" className="text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">
-                Pricing
+              <Link href="/api-docs" prefetch className="text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">
+                API Docs
               </Link>
               <Link href="#about" className="text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">
                 About us
@@ -171,12 +171,8 @@ export default function Home() {
         >
           {/* Social Proof Badge */}
           <motion.div variants={itemVariants} className="mb-10 inline-flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-full px-4 py-2">
-            <div className="flex -space-x-1.5">
-              <div className="w-6 h-6 rounded-full bg-linear-to-br from-blue-400 to-blue-600 border-2 border-white"></div>
-              <div className="w-6 h-6 rounded-full bg-linear-to-br from-purple-400 to-purple-600 border-2 border-white"></div>
-              <div className="w-6 h-6 rounded-full bg-linear-to-br from-pink-400 to-pink-600 border-2 border-white"></div>
-            </div>
-            <span className="text-sm text-slate-700">17,000 people have been helped</span>
+            <Bot className="w-5 h-5 text-blue-600" />
+            <span className="text-sm text-slate-700">Build your army of agents</span>
             <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
           </motion.div>
 
