@@ -93,19 +93,19 @@ export async function removeWalletFromUser(userId: string): Promise<void> {
 }
 
 /**
- * Fetch STT token balance (native token of BlockOps testnet)
+ * Fetch ETH balance on Ethereum Sepolia
  * @param address - The wallet address
- * @returns STT token balance as string
+ * @returns ETH balance as string
  */
 export async function getTokenBalances(address: string): Promise<{
   stt: string
 }> {
-  const SOMNIA_RPC_URL = 'https://dream-rpc.somnia.network'
+  const ETH_RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'
 
   try {
-    const provider = new ethers.JsonRpcProvider(SOMNIA_RPC_URL)
+    const provider = new ethers.JsonRpcProvider(ETH_RPC_URL)
     
-    // Get native STT balance (native token, not ERC-20)
+    // Get native ETH balance on Ethereum Sepolia
     const balance = await provider.getBalance(address)
 
     // Format balance (STT uses 18 decimals like ETH)
