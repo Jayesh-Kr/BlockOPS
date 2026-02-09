@@ -320,6 +320,114 @@ export default function MyAgents() {
               </div>
             </div>
 
+            {/* API Key Documentation */}
+            <div className="space-y-2">
+              <label className="text-sm font-semibold">API Key Documentation</label>
+              <div className="space-y-4 text-sm">
+                {/* What is the API Key */}
+                <div className="p-3 bg-muted border rounded-md">
+                  <h4 className="font-semibold mb-2">What is the API Key?</h4>
+                  <p className="text-muted-foreground leading-relaxed">
+                    The API key is a unique 32-character identifier that authenticates requests to your agent. 
+                    It's automatically generated when you create an agent and allows external applications to 
+                    interact with your agent programmatically.
+                  </p>
+                </div>
+
+                {/* How to Use */}
+                <div className="p-3 bg-muted border rounded-md">
+                  <h4 className="font-semibold mb-2">How to Use</h4>
+                  <ul className="space-y-2 text-muted-foreground">
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">1.</span>
+                      <span><strong>Copy your API key</strong> from above (click the copy button)</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">2.</span>
+                      <span><strong>Include it in your requests</strong> as the <code className="bg-muted px-1 py-0.5 rounded">api_key</code> parameter</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">3.</span>
+                      <span><strong>Send POST requests</strong> to <code className="bg-muted px-1 py-0.5 rounded">https://somnia-agent-builder.vercel.app/api/agent/chat</code></span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">4.</span>
+                      <span><strong>Receive responses</strong> with agent replies and tool execution results</span>
+                    </li>
+                  </ul>
+                </div>
+
+                {/* Security Best Practices */}
+                <div className="p-3 bg-muted border rounded-md">
+                  <h4 className="font-semibold mb-2">Security Best Practices</h4>
+                  <ul className="space-y-2 text-muted-foreground">
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">•</span>
+                      <span><strong>Never expose</strong> your API key in client-side code or public repositories</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">•</span>
+                      <span><strong>Store securely</strong> in environment variables or secure vaults</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">•</span>
+                      <span><strong>Don't share</strong> your API key publicly or commit it to version control</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold shrink-0">•</span>
+                      <span><strong>Rotate regularly</strong> by deleting and recreating your agent if compromised</span>
+                    </li>
+                  </ul>
+                </div>
+
+                {/* Request Parameters */}
+                <div className="p-3 bg-muted border rounded-md">
+                  <h4 className="font-semibold mb-2">Request Parameters</h4>
+                  <div className="space-y-2 text-muted-foreground">
+                    <div className="border-b border-border pb-2">
+                      <code className="bg-muted px-2 py-1 rounded font-semibold">api_key</code>
+                      <span className="ml-2 text-xs bg-muted px-2 py-0.5 rounded border">required</span>
+                      <p className="mt-1 text-xs">Your unique 32-character API key (string)</p>
+                    </div>
+                    <div>
+                      <code className="bg-muted px-2 py-1 rounded font-semibold">user_message</code>
+                      <span className="ml-2 text-xs bg-muted px-2 py-0.5 rounded border">required</span>
+                      <p className="mt-1 text-xs">The message/instruction you want to send to the agent (string)</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Response Structure */}
+                <div className="p-3 bg-muted border rounded-md">
+                  <h4 className="font-semibold mb-2">Response Structure</h4>
+                  <div className="space-y-2 text-muted-foreground text-xs">
+                    <div>
+                      <code className="bg-muted px-2 py-1 rounded font-semibold">agent_response</code>
+                      <p className="mt-1">The agent's natural language response to your message</p>
+                    </div>
+                    <div>
+                      <code className="bg-muted px-2 py-1 rounded font-semibold">tool_calls</code>
+                      <p className="mt-1">Array of tools the agent called during execution</p>
+                    </div>
+                    <div>
+                      <code className="bg-muted px-2 py-1 rounded font-semibold">results</code>
+                      <p className="mt-1">Array of results from each tool execution</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Rate Limits & Usage */}
+                <div className="p-3 bg-muted border rounded-md">
+                  <h4 className="font-semibold mb-2">Rate Limits & Usage</h4>
+                  <p className="text-muted-foreground text-xs leading-relaxed">
+                    Each API key is unique to your agent. Monitor your usage through the agent dashboard. 
+                    For high-volume applications, consider implementing client-side rate limiting and error handling 
+                    to ensure reliable operation.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             {/* cURL Example */}
             <div className="space-y-2">
               <label className="text-sm font-semibold">cURL Example</label>
