@@ -55,11 +55,6 @@ export default function Home() {
               Get Started
             </Button>
           )}
-          <Button asChild size="lg" variant="outline" className="text-base px-6 py-5">
-            <Link href="/components-showcase">
-              View Components
-            </Link>
-          </Button>
         </div>
         {!authenticated && (
           <p className="text-sm text-muted-foreground">

@@ -129,11 +129,6 @@ export default function MyAgents() {
                 Create New Agent
               </Link>
             </Button>
-            <Button asChild size="lg" variant="outline">
-              <Link href="/components-showcase">
-                View Components
-              </Link>
-            </Button>
             <AgentWalletModal open={walletModalOpen} onOpenChange={setWalletModalOpen} hideButton={isWalletLogin} />
             <UserProfile onLogout={logout} />
           </div>
