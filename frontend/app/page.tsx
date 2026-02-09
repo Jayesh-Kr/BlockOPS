@@ -218,63 +218,13 @@ export default function Home() {
               </>
             ) : (
               <>
-                <Modal>
-                  <ModalTrigger className="bg-slate-900 hover:bg-slate-800 text-white font-medium px-8 py-3 rounded-lg text-base">
-                    <span className="text-center">
-                      Get Started
-                    </span>
-                  </ModalTrigger>
-                  <ModalBody>
-                    <ModalContent>
-                      <h4 className="text-lg md:text-2xl text-slate-900 font-bold text-center mb-8">
-                        Welcome to{" "}
-                        <span className="px-1 py-0.5 rounded-md bg-slate-100 border border-slate-200">
-                          BlockOps
-                        </span>{" "}
-                        🚀
-                      </h4>
-                      <div className="py-10 flex flex-col gap-6 max-w-sm mx-auto">
-                        <div className="space-y-4 text-slate-600">
-                          <p>
-                            Start building powerful AI agents that automate your blockchain workflows. Connect your wallet to get started.
-                          </p>
-                          <div className="bg-slate-50 rounded-lg p-4 space-y-3">
-                            <h5 className="font-semibold text-slate-900">What you'll get:</h5>
-                            <ul className="space-y-2 text-sm">
-                              <li className="flex items-start gap-2">
-                                <span className="text-slate-900">✓</span>
-                                <span>Visual workflow builder</span>
-                              </li>
-                              <li className="flex items-start gap-2">
-                                <span className="text-slate-900">✓</span>
-                                <span>Secure wallet integration</span>
-                              </li>
-                              <li className="flex items-start gap-2">
-                                <span className="text-slate-900">✓</span>
-                                <span>AI-powered assistance</span>
-                              </li>
-                              <li className="flex items-start gap-2">
-                                <span className="text-slate-900">✓</span>
-                                <span>Multi-chain support</span>
-                              </li>
-                            </ul>
-                          </div>
-                        </div>
-                      </div>
-                    </ModalContent>
-                    <ModalFooter className="gap-4">
-                      <button className="px-4 py-2 bg-slate-200 text-slate-900 border border-slate-300 rounded-md text-sm w-28 hover:bg-slate-300 transition-colors">
-                        Cancel
-                      </button>
-                      <button 
-                        onClick={handleGetStarted}
-                        className="bg-slate-900 text-white text-sm px-4 py-2 rounded-md border border-slate-900 w-32 hover:bg-slate-800 transition-colors"
-                      >
-                        Connect Wallet
-                      </button>
-                    </ModalFooter>
-                  </ModalBody>
-                </Modal>
+                <Button 
+                  onClick={handleGetStarted}
+                  size="lg" 
+                  className="bg-slate-900 hover:bg-slate-800 text-white font-medium px-8 rounded-lg"
+                >
+                  Get Started
+                </Button>
               </>
             )}
           </motion.div>
@@ -282,7 +232,7 @@ export default function Home() {
           {/* Hero Image */}
           <motion.div variants={itemVariants} className="w-full max-w-3xl mx-auto">
             <Image
-              src="/hero.avif"
+              src="/hero-diagram.png"
               alt="BlockOps Platform"
               width={1200}
               height={700}
@@ -294,7 +244,7 @@ export default function Home() {
       </main>
 
       {/* By the Numbers Section */}
-      <section className="bg-black min-h-screen flex items-center justify-center relative overflow-hidden">
+      <section id="features" className="bg-black min-h-screen flex items-center justify-center relative overflow-hidden">
         {/* Grid Background */}
         <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-size-[64px_64px] mask-[radial-gradient(ellipse_80%_50%_at_50%_50%,black,transparent)]"></div>
         
