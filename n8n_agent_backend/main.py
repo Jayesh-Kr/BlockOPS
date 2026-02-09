@@ -26,14 +26,14 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:3000")
 TOOL_DEFINITIONS = {
     "transfer": {
         "name": "transfer",
-        "description": "Transfer tokens from one address to another. Requires privateKey, toAddress, amount, and optionally tokenAddress.",
+        "description": "Transfer tokens from one address to another. Requires privateKey, toAddress, amount, and optionally tokenId for ERC20 transfers (omit for native ETH).",
         "parameters": {
             "type": "object",
             "properties": {
                 "privateKey": {"type": "string", "description": "Private key of the sender wallet"},
                 "toAddress": {"type": "string", "description": "Recipient wallet address"},
                 "amount": {"type": "string", "description": "Amount of tokens to transfer"},
-                "tokenAddress": {"type": "string", "description": "Contract address of the token (optional for ETH)"}
+                "tokenId": {"type": "string", "description": "Token ID from factory (optional, for ERC20 transfers only, omit for ETH)"}
             },
             "required": ["privateKey", "toAddress", "amount"]
         },
@@ -50,38 +50,40 @@ TOOL_DEFINITIONS = {
             },
             "required": ["address"]
         },
-        "endpoint": f"{BACKEND_URL}/balance/{{address}}",
+        "endpoint": f"{BACKEND_URL}/transfer/balance/{{address}}",
         "method": "GET"
     },
     "deploy_erc20": {
         "name": "deploy_erc20",
-        "description": "Deploy a new ERC-20 token. Requires privateKey, name, symbol, and initialSupply.",
+        "description": "Deploy a new ERC-20 token via Stylus TokenFactory. Returns a tokenId. Requires privateKey, name, symbol, and initialSupply. Optional: decimals (default 18).",
         "parameters": {
             "type": "object",
             "properties": {
                 "privateKey": {"type": "string", "description": "Private key of the deployer wallet"},
                 "name": {"type": "string", "description": "Token name"},
                 "symbol": {"type": "string", "description": "Token symbol"},
-                "initialSupply": {"type": "string", "description": "Initial token supply"}
+                "initialSupply": {"type": "string", "description": "Initial token supply"},
+                "decimals": {"type": "number", "description": "Token decimals (optional, default 18)"}
             },
             "required": ["privateKey", "name", "symbol", "initialSupply"]
         },
-        "endpoint": f"{BACKEND_URL}/deploy-token",
+        "endpoint": f"{BACKEND_URL}/token/deploy",
         "method": "POST"
     },
     "deploy_erc721": {
         "name": "deploy_erc721",
-        "description": "Deploy a new ERC-721 NFT collection. Requires privateKey, name, and symbol.",
+        "description": "Deploy a new ERC-721 NFT collection via Stylus NFTFactory. Requires privateKey, name, symbol, and baseURI.",
         "parameters": {
             "type": "object",
             "properties": {
                 "privateKey": {"type": "string", "description": "Private key of the deployer wallet"},
                 "name": {"type": "string", "description": "NFT collection name"},
-                "symbol": {"type": "string", "description": "NFT collection symbol"}
+                "symbol": {"type": "string", "description": "NFT collection symbol"},
+                "baseURI": {"type": "string", "description": "Base URI for token metadata (e.g., ipfs://...)"}
             },
-            "required": ["privateKey", "name", "symbol"]
+            "required": ["privateKey", "name", "symbol", "baseURI"]
         },
-        "endpoint": f"{BACKEND_URL}/deploy-nft-collection",
+        "endpoint": f"{BACKEND_URL}/nft/deploy-collection",
         "method": "POST"
     },
     "fetch_price": {
@@ -96,6 +98,62 @@ TOOL_DEFINITIONS = {
         },
         "endpoint": f"{BACKEND_URL}/price/token",
         "method": "POST"
+    },
+    "get_token_info": {
+        "name": "get_token_info",
+        "description": "Get detailed information about a deployed token using its tokenId. Returns name, symbol, decimals, total supply, and creator.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tokenId": {"type": "string", "description": "The token ID returned from deployment"}
+            },
+            "required": ["tokenId"]
+        },
+        "endpoint": f"{BACKEND_URL}/token/info/{{tokenId}}",
+        "method": "GET"
+    },
+    "get_token_balance": {
+        "name": "get_token_balance",
+        "description": "Get token balance for a specific address. Requires tokenId and ownerAddress.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tokenId": {"type": "string", "description": "The token ID"},
+                "ownerAddress": {"type": "string", "description": "Wallet address to check balance"}
+            },
+            "required": ["tokenId", "ownerAddress"]
+        },
+        "endpoint": f"{BACKEND_URL}/token/balance/{{tokenId}}/{{ownerAddress}}",
+        "method": "GET"
+    },
+    "mint_nft": {
+        "name": "mint_nft",
+        "description": "Mint a new NFT in an existing collection. Requires privateKey, collectionAddress, and toAddress.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "privateKey": {"type": "string", "description": "Private key of the collection creator"},
+                "collectionAddress": {"type": "string", "description": "NFT collection contract address"},
+                "toAddress": {"type": "string", "description": "Recipient wallet address"}
+            },
+            "required": ["privateKey", "collectionAddress", "toAddress"]
+        },
+        "endpoint": f"{BACKEND_URL}/nft/mint",
+        "method": "POST"
+    },
+    "get_nft_info": {
+        "name": "get_nft_info",
+        "description": "Get information about a specific NFT. Requires collectionAddress and tokenId.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "collectionAddress": {"type": "string", "description": "NFT collection contract address"},
+                "tokenId": {"type": "string", "description": "Token ID within the collection"}
+            },
+            "required": ["collectionAddress", "tokenId"]
+        },
+        "endpoint": f"{BACKEND_URL}/nft/info/{{collectionAddress}}/{{tokenId}}",
+        "method": "GET"
     }
 }
 
@@ -115,6 +173,35 @@ class AgentResponse(BaseModel):
     results: List[Dict[str, Any]]
 
 # Helper Functions
+def convert_to_gemini_tools(tool_names: List[str]) -> List[Dict[str, Any]]:
+    """Convert tool definitions to Gemini function declaration format"""
+    function_declarations = []
+    
+    for tool_name in tool_names:
+        if tool_name in TOOL_DEFINITIONS:
+            tool_def = TOOL_DEFINITIONS[tool_name]
+            
+            # Deep copy to avoid modifying original
+            import copy
+            parameters = copy.deepcopy(tool_def["parameters"])
+            
+            # Convert types to uppercase for Gemini (STRING, NUMBER, OBJECT, etc.)
+            if "type" in parameters:
+                parameters["type"] = parameters["type"].upper()
+            
+            if "properties" in parameters:
+                for prop_name, prop_def in parameters["properties"].items():
+                    if "type" in prop_def:
+                        prop_def["type"] = prop_def["type"].upper()
+            
+            function_declarations.append({
+                "name": tool_def["name"],
+                "description": tool_def["description"],
+                "parameters": parameters
+            })
+            
+    return function_declarations
+
 def build_system_prompt(tool_connections: List[ToolConnection]) -> str:
     """Build a dynamic system prompt based on connected tools"""
     
@@ -189,10 +276,20 @@ def execute_tool(tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
     method = tool_def["method"]
     
     # Handle URL parameters for GET requests
-    if "{address}" in endpoint:
-        if "address" in parameters:
-            endpoint = endpoint.replace("{address}", parameters["address"])
-            parameters = {}
+    url_params_to_replace = {
+        "{address}": "address",
+        "{tokenId}": "tokenId",
+        "{ownerAddress}": "ownerAddress",
+        "{collectionAddress}": "collectionAddress"
+    }
+    
+    params_for_request = parameters.copy()
+    
+    # Replace URL parameters
+    for placeholder, param_name in url_params_to_replace.items():
+        if placeholder in endpoint and param_name in params_for_request:
+            endpoint = endpoint.replace(placeholder, str(params_for_request[param_name]))
+            del params_for_request[param_name]
     
     # Prepare headers - check if Bearer token is needed
     headers = {}
@@ -203,7 +300,7 @@ def execute_tool(tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
     
     try:
         if method == "POST":
-            response = requests.post(endpoint, json=parameters, headers=headers, timeout=60)
+            response = requests.post(endpoint, json=params_for_request, headers=headers, timeout=60)
         elif method == "GET":
             response = requests.get(endpoint, headers=headers, timeout=60)
         else:
@@ -254,31 +351,61 @@ def process_agent_conversation(
     if private_key:
         system_prompt += f"\n\nCONTEXT: User's private key is available: {private_key}"
     
-    # Initialize Gemini model
-    model = genai.GenerativeModel(
-        model_name='gemini-2.0-flash-exp',
-        generation_config={
-            "temperature": 0.7,
-            "top_p": 0.8,
-            "top_k": 40,
-        },
-        tools='google_search_retrieval'  # Enable Google Search
-    )
-    
     # Build function declarations for Gemini
-    function_declarations = []
-    for tool_name in available_tools:
-        if tool_name in TOOL_DEFINITIONS:
-            tool_def = TOOL_DEFINITIONS[tool_name]
-            function_declarations.append({
-                "name": tool_def["name"],
-                "description": tool_def["description"],
-                "parameters": tool_def["parameters"]
-            })
+    function_declarations = convert_to_gemini_tools(available_tools)
+
+    # Initialize Gemini model
+    # Prioritize Gemini 2.0 Flash (Stable) -> 1.5 Flash (Specific Versions) -> 1.5 Pro
+    model_names = [
+        'gemini-2.0-flash',          # Current stable fast model
+        'gemini-1.5-flash-002',      # Specific version of 1.5 Flash
+        'gemini-1.5-flash-001',      # Older version of 1.5 Flash
+        'gemini-1.5-flash'           # Generic alias (sometimes deprecated)
+    ]
+    model = None
+    last_error = None
+
+    # Configure tools structure
+    tools_configuration = [{"function_declarations": function_declarations}] if function_declarations else None
+
+    for name in model_names:
+        try:
+            print(f"Attempting to initialize model: {name}")
+            model = genai.GenerativeModel(
+                model_name=name,
+                tools=tools_configuration,
+                generation_config={
+                    "temperature": 0.7,
+                    "top_p": 0.8,
+                    "top_k": 40,
+                }
+            )
+            # Test if model works by starting chat (lazy init might not fail until use)
+            chat = model.start_chat(history=[])
+            print(f"Successfully initialized model: {name}")
+            break
+        except Exception as e:
+            print(f"Failed to initialize {name}: {str(e)}")
+            last_error = e
+            continue
     
-    # Start chat session
-    chat = model.start_chat(history=[])
-    
+    if not model:
+        # Fallback to Pro if Flash fails completely
+        try:
+            print("All Flash models failed. Falling back to Gemini 1.5 Pro...")
+            model = genai.GenerativeModel(
+                model_name='gemini-1.5-pro',
+                tools=tools_configuration,
+                generation_config={
+                    "temperature": 0.7,
+                    "top_p": 0.8,
+                    "top_k": 40,
+                }
+            )
+            chat = model.start_chat(history=[])
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to initialize any Gemini model. Last error: {str(last_error)}")
+
     all_tool_calls = []
     all_tool_results = []
     iteration = 0
@@ -289,8 +416,19 @@ def process_agent_conversation(
     while iteration < max_iterations:
         iteration += 1
         
-        # Send message to Gemini
-        response = chat.send_message(full_prompt)
+        try:
+            # Send message to Gemini
+            response = chat.send_message(full_prompt)
+        except Exception as e:
+            # Handle potential API errors gracefully
+            if "429" in str(e):
+                return {
+                    "agent_response": "I'm currently experiencing high traffic (Rate Limit Exceeded). Please try again in a few moments.",
+                    "tool_calls": all_tool_calls,
+                    "results": all_tool_results,
+                    "conversation_history": []
+                }
+            raise e
         
         # Check if there are function calls
         function_calls = []
@@ -314,8 +452,9 @@ def process_agent_conversation(
             function_args = dict(function_call.args)
             
             # Add private key if needed and available
-            if private_key and "privateKey" in TOOL_DEFINITIONS[function_name]["parameters"]["properties"]:
-                if "privateKey" not in function_args:
+            if private_key and function_name in TOOL_DEFINITIONS:
+                tool_params = TOOL_DEFINITIONS[function_name]["parameters"]["properties"]
+                if "privateKey" in tool_params and "privateKey" not in function_args:
                     function_args["privateKey"] = private_key
             
             all_tool_calls.append({
@@ -399,7 +538,7 @@ async def health_check():
         "status": "healthy",
         "service": "AI Agent Builder",
         "blockchain": "Arbitrum Sepolia",
-        "ai_model": "Google Gemini 2.0 Flash",
+        "ai_model": "Auto-detect (Prioritizing Gemini 2.0 Flash)",
         "backend_url": BACKEND_URL
     }
 
