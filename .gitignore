@@ -91,3 +91,13 @@ desktop.ini
 # Explicitly allow __pycache__ folders to be tracked
 !__pycache__/
 !**/__pycache__/
+
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# Rust build artifacts
+*.wasm
+*.wat
