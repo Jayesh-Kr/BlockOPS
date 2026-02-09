@@ -1,214 +1,275 @@
-![Image](./header.png)
+# ERC721 NFT Factory - Stylus
 
-# Stylus Hello World
+A complete, production-ready ERC721 NFT collection implementation built with [Arbitrum Stylus](https://arbitrum.io/stylus). This project enables users to easily deploy their own custom NFT collections with AI assistance.
 
-Project starter template for writing Arbitrum Stylus programs in Rust using the [stylus-sdk](https://github.com/OffchainLabs/stylus-sdk-rs). It includes a Rust implementation of a basic counter Ethereum smart contract:
+## 🌟 Features
 
-```js
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
+- ✅ **Full ERC721 Standard**: Complete implementation with all standard methods
+- 🎨 **Customizable**: Set name, symbol, and base URI for metadata
+- 🖼️ **NFT Support**: Mint, transfer, and burn NFTs with ease
+- 🤖 **AI-Friendly**: Designed for easy integration with AI agents
+- 🔒 **Secure**: Built with Rust for memory safety and performance
+- ⚡ **Efficient**: Optimized for low gas costs on Arbitrum
+- 🧪 **Tested**: Comprehensive unit tests included
 
-contract Counter {
-    uint256 public number;
+## 📋 ERC721 Functions
 
-    function setNumber(uint256 newNumber) public {
-        number = newNumber;
-    }
+### View Functions
+- `name()` - Returns collection name
+- `symbol()` - Returns collection symbol
+- `baseUri()` - Returns base URI for metadata
+- `tokenUri(tokenId)` - Returns metadata URI for a specific token
+- `totalSupply()` - Returns total number of NFTs minted
+- `balanceOf(owner)` - Returns number of NFTs owned by an address
+- `ownerOf(tokenId)` - Returns owner of a specific token
+- `getApproved(tokenId)` - Returns approved address for a token
+- `isApprovedForAll(owner, operator)` - Checks if operator is approved for all tokens
 
-    function increment() public {
-        number++;
-    }
-}
-```
+### State-Changing Functions
+- `initialize(name, symbol, baseUri)` - Initialize NFT collection (call once after deployment)
+- `mint(to)` - Mint a new NFT to an address (returns token ID)
+- `burn(tokenId)` - Burn (destroy) an NFT
+- `transferFrom(from, to, tokenId)` - Transfer NFT from one address to another
+- `safeTransferFrom(from, to, tokenId)` - Safely transfer NFT
+- `approve(to, tokenId)` - Approve an address to transfer a specific token
+- `setApprovalForAll(operator, approved)` - Set approval for all tokens
 
-To set up more minimal example that still uses the Stylus SDK, use `cargo stylus new --minimal <YOUR_PROJECT_NAME>` under [OffchainLabs/cargo-stylus](https://github.com/OffchainLabs/cargo-stylus).
+## 🚀 Quick Start
 
-## Quick Start 
-
-Install [Rust](https://www.rust-lang.org/tools/install), and then install the Stylus CLI tool with Cargo
+### Prerequisites
 
 ```bash
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install Stylus CLI tools
 cargo install --force cargo-stylus cargo-stylus-check
-```
 
-Add the `wasm32-unknown-unknown` build target to your Rust compiler:
-
-```
+# Add WASM target
 rustup target add wasm32-unknown-unknown
 ```
 
-You should now have it available as a Cargo subcommand:
+### Build & Test
 
 ```bash
-cargo stylus --help
+# Check if contract is valid
+cargo stylus check
+
+# Run tests
+cargo test
+
+# Build optimized WASM
+cargo build --release --target wasm32-unknown-unknown
 ```
 
-Then, clone the template:
+### Deploy
+
+1. **Set up environment**:
+```bash
+cp .env.example .env
+# Edit .env and add your PRIVATE_KEY
+```
+
+2. **Deploy using the script**:
+```bash
+chmod +x deploy.sh
+./deploy.sh
+```
+
+Or manually:
+```bash
+cargo stylus deploy \
+  --private-key=$PRIVATE_KEY \
+  --endpoint=https://sepolia-rollup.arbitrum.io/rpc
+```
+
+3. **Initialize your NFT collection**:
+```bash
+cast send <CONTRACT_ADDRESS> \
+  "initialize(string,string,string)" \
+  "My NFT Collection" \
+  "MNFT" \
+  "https://api.example.com/metadata/" \
+  --private-key $PRIVATE_KEY \
+  --rpc-url https://sepolia-rollup.arbitrum.io/rpc
+```
+
+4. **Mint your first NFT**:
+```bash
+cast send <CONTRACT_ADDRESS> \
+  "mint(address)" \
+  <YOUR_ADDRESS> \
+  --private-key $PRIVATE_KEY \
+  --rpc-url https://sepolia-rollup.arbitrum.io/rpc
+```
+
+## 💡 Usage Examples
+
+### JavaScript/TypeScript (ethers.js)
+
+```typescript
+import { ethers } from 'ethers';
+
+const provider = new ethers.JsonRpcProvider('https://sepolia-rollup.arbitrum.io/rpc');
+const wallet = new ethers.Wallet(process.env.PRIVATE_KEY!, provider);
+
+const nftAddress = '0x...'; // Your deployed contract
+const abi = [
+  "function initialize(string,string,string)",
+  "function mint(address) returns (uint256)",
+  "function balanceOf(address) view returns (uint256)",
+  "function ownerOf(uint256) view returns (address)",
+  "function tokenUri(uint256) view returns (string)"
+];
+
+const nft = new ethers.Contract(nftAddress, abi, wallet);
+
+// Initialize collection
+await nft.initialize("My NFTs", "MNFT", "https://api.example.com/");
+
+// Mint an NFT
+const tx = await nft.mint(wallet.address);
+await tx.wait();
+
+// Check balance
+const balance = await nft.balanceOf(wallet.address);
+console.log(`You own ${balance} NFTs`);
+```
+
+### Python (web3.py)
+
+```python
+from web3 import Web3
+
+w3 = Web3(Web3.HTTPProvider('https://sepolia-rollup.arbitrum.io/rpc'))
+account = w3.eth.account.from_key(private_key)
+
+nft = w3.eth.contract(address=contract_address, abi=abi)
+
+# Initialize
+tx = nft.functions.initialize(
+    "My NFTs",
+    "MNFT", 
+    "https://api.example.com/"
+).build_transaction({
+    'from': account.address,
+    'nonce': w3.eth.get_transaction_count(account.address),
+})
+
+signed = account.sign_transaction(tx)
+tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
+w3.eth.wait_for_transaction_receipt(tx_hash)
+
+# Mint NFT
+tx = nft.functions.mint(account.address).build_transaction({
+    'from': account.address,
+    'nonce': w3.eth.get_transaction_count(account.address),
+})
+signed = account.sign_transaction(tx)
+tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
+print(f"Minted NFT: {tx_hash.hex()}")
+```
+
+## 🖼️ NFT Metadata
+
+For proper display on marketplaces like OpenSea, host metadata at `{baseUri}{tokenId}`:
+
+```json
+{
+  "name": "My NFT #1",
+  "description": "An awesome NFT",
+  "image": "ipfs://QmXxxx.../1.png",
+  "attributes": [
+    {
+      "trait_type": "Background",
+      "value": "Blue"
+    },
+    {
+      "trait_type": "Rarity", 
+      "value": "Rare"
+    }
+  ]
+}
+```
+
+## 🧪 Testing
+
+Run the test suite:
+
+```bash
+cargo test
+```
+
+Tests include:
+- ✅ Initialization
+- ✅ Minting NFTs
+- ✅ Transferring NFTs
+- ✅ Approvals
+- ✅ Burning NFTs
+- ✅ Error handling
+
+## 📖 Documentation
+
+- [Full Deployment Guide](DEPLOYMENT_GUIDE.md)
+- [Arbitrum Stylus Docs](https://docs.arbitrum.io/stylus/stylus-gentle-introduction)
+- [ERC721 Standard](https://eips.ethereum.org/EIPS/eip-721)
+
+## 🔧 Development
+
+### Project Structure
 
 ```
-git clone https://github.com/OffchainLabs/stylus-hello-world && cd stylus-hello-world
+nft_factory/
+├── src/
+│   ├── lib.rs          # Main ERC721 implementation
+│   └── main.rs         # Binary entry point
+├── Cargo.toml          # Rust dependencies
+├── deploy.sh           # Deployment script
+├── DEPLOYMENT_GUIDE.md # Detailed deployment instructions
+└── README.md           # This file
 ```
 
-### Testnet Information
-
-All testnet information, including faucets and RPC endpoints can be found [here](https://docs.arbitrum.io/stylus/reference/testnet-information).
-
-### ABI Export
-
-You can export the Solidity ABI for your program by using the `cargo stylus` tool as follows:
+### Export ABI
 
 ```bash
 cargo stylus export-abi
 ```
 
-which outputs:
+## 🌐 Network Support
 
-```js
-/**
- * This file was automatically generated by Stylus and represents a Rust program.
- * For more information, please see [The Stylus SDK](https://github.com/OffchainLabs/stylus-sdk-rs).
- */
+- **Arbitrum Sepolia** (Testnet): `https://sepolia-rollup.arbitrum.io/rpc`
+- **Arbitrum One** (Mainnet): `https://arb1.arbitrum.io/rpc`
 
-// SPDX-License-Identifier: MIT-OR-APACHE-2.0
-pragma solidity ^0.8.23;
+Get testnet ETH from: [Arbitrum Faucet](https://faucet.arbitrum.io/)
 
-interface ICounter {
-    function number() external view returns (uint256);
+## 📝 License
 
-    function setNumber(uint256 new_number) external;
+This project is licensed under MIT OR Apache-2.0.
 
-    function mulNumber(uint256 new_number) external;
+## 🤝 Contributing
 
-    function addNumber(uint256 new_number) external;
+Contributions welcome! Please feel free to submit a Pull Request.
 
-    function increment() external;
-}
-```
+## ⚠️ Security
 
-Exporting ABIs uses a feature that is enabled by default in your Cargo.toml:
+This code is provided as-is and has not been audited. Use at your own risk for production deployments.
 
-```toml
-[features]
-export-abi = ["stylus-sdk/export-abi"]
-```
+## 🆘 Support
 
-## Deploying
+- [Arbitrum Discord](https://discord.gg/arbitrum)
+- [Stylus Documentation](https://docs.arbitrum.io/stylus/stylus-gentle-introduction)
+- Open an issue in this repository
 
-You can use the `cargo stylus` command to also deploy your program to the Stylus testnet. We can use the tool to first check
-our program compiles to valid WASM for Stylus and will succeed a deployment onchain without transacting. By default, this will use the Stylus testnet public RPC endpoint. See here for [Stylus testnet information](https://docs.arbitrum.io/stylus/reference/testnet-information)
+## 🎯 Example Use Cases
 
-```bash
-cargo stylus check
-```
+- **Digital Art**: Create and sell unique digital artworks
+- **Gaming Assets**: In-game items, characters, and collectibles
+- **Membership Passes**: Access tokens for exclusive communities
+- **Event Tickets**: NFT-based ticketing systems
+- **Certificates**: Verifiable credentials and achievements
+- **Real Estate**: Tokenized property ownership
+- **Music & Media**: Rights management and royalties
 
-If successful, you should see:
+---
 
-```bash
-Finished release [optimized] target(s) in 1.88s
-Reading WASM file at stylus-hello-world/target/wasm32-unknown-unknown/release/stylus-hello-world.wasm
-Compressed WASM size: 8.9 KB
-Program succeeded Stylus onchain activation checks with Stylus version: 1
-```
-
-Next, we can estimate the gas costs to deploy and activate our program before we send our transaction. Check out the [cargo-stylus](https://github.com/OffchainLabs/cargo-stylus) README to see the different wallet options for this step:
-
-```bash
-cargo stylus deploy \
-  --private-key-path=<PRIVKEY_FILE_PATH> \
-  --estimate-gas
-```
-
-You will then see the estimated gas cost for deploying before transacting:
-
-```bash
-Deploying program to address e43a32b54e48c7ec0d3d9ed2d628783c23d65020
-Estimated gas for deployment: 1874876
-```
-
-The above only estimates gas for the deployment tx by default. To estimate gas for activation, first deploy your program using `--mode=deploy-only`, and then run `cargo stylus deploy` with the `--estimate-gas` flag, `--mode=activate-only`, and specify `--activate-program-address`.
-
-
-Here's how to deploy:
-
-```bash
-cargo stylus deploy \
-  --private-key-path=<PRIVKEY_FILE_PATH>
-```
-
-The CLI will send 2 transactions to deploy and activate your program onchain.
-
-```bash
-Compressed WASM size: 8.9 KB
-Deploying program to address 0x457b1ba688e9854bdbed2f473f7510c476a3da09
-Estimated gas: 1973450
-Submitting tx...
-Confirmed tx 0x42db…7311, gas used 1973450
-Activating program at address 0x457b1ba688e9854bdbed2f473f7510c476a3da09
-Estimated gas: 14044638
-Submitting tx...
-Confirmed tx 0x0bdb…3307, gas used 14044638
-```
-
-Once both steps are successful, you can interact with your program as you would with any Ethereum smart contract.
-
-## Calling Your Program
-
-This template includes an example of how to call and transact with your program in Rust using [ethers-rs](https://github.com/gakonst/ethers-rs) under the `examples/counter.rs`. However, your programs are also Ethereum ABI equivalent if using the Stylus SDK. **They can be called and transacted with using any other Ethereum tooling.**
-
-By using the program address from your deployment step above, and your wallet, you can attempt to call the counter program and increase its value in storage:
-
-```rs
-abigen!(
-    Counter,
-    r#"[
-        function number() external view returns (uint256)
-        function setNumber(uint256 number) external
-        function increment() external
-    ]"#
-);
-let counter = Counter::new(address, client);
-let num = counter.number().call().await;
-println!("Counter number value = {:?}", num);
-
-let _ = counter.increment().send().await?.await?;
-println!("Successfully incremented counter via a tx");
-
-let num = counter.number().call().await;
-println!("New counter number value = {:?}", num);
-```
-
-Before running, set the following env vars or place them in a `.env` file (see: [.env.example](./.env.example)) in this project:
-
-```
-RPC_URL=https://sepolia-rollup.arbitrum.io/rpc
-STYLUS_CONTRACT_ADDRESS=<the onchain address of your deployed program>
-PRIV_KEY_PATH=<the file path for your priv key to transact with>
-```
-
-Next, run:
-
-```
-cargo run --example counter --target=<YOUR_ARCHITECTURE>
-```
-
-Where you can find `YOUR_ARCHITECTURE` by running `rustc -vV | grep host`. For M1 Apple computers, for example, this is `aarch64-apple-darwin` and for most Linux x86 it is `x86_64-unknown-linux-gnu`
-
-## Build Options
-
-By default, the cargo stylus tool will build your project for WASM using sensible optimizations, but you can control how this gets compiled by seeing the full README for [cargo stylus](https://github.com/OffchainLabs/cargo-stylus). If you wish to optimize the size of your compiled WASM, see the different options available [here](https://github.com/OffchainLabs/cargo-stylus/blob/main/OPTIMIZING_BINARIES.md).
-
-## Peeking Under the Hood
-
-The [stylus-sdk](https://github.com/OffchainLabs/stylus-sdk-rs) contains many features for writing Stylus programs in Rust. It also provides helpful macros to make the experience for Solidity developers easier. These macros expand your code into pure Rust code that can then be compiled to WASM. If you want to see what the `stylus-hello-world` boilerplate expands into, you can use `cargo expand` to see the pure Rust code that will be deployed onchain.
-
-First, run `cargo install cargo-expand` if you don't have the subcommand already, then:
-
-```
-cargo expand --all-features --release --target=<YOUR_ARCHITECTURE>
-```
-
-Where you can find `YOUR_ARCHITECTURE` by running `rustc -vV | grep host`. For M1 Apple computers, for example, this is `aarch64-apple-darwin`.
-
-## License
-
-This project is fully open source, including an Apache-2.0 or MIT license at your choosing under your own copyright.
+Built with ❤️ using [Arbitrum Stylus](https://arbitrum.io/stylus)
