@@ -1,12 +1,11 @@
-version: '3.8'
-
 services:
   n8n-agent-backend:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: n8n-agent-backend
-    network_mode: host
+    ports:
+      - "8000:8000"
     environment:
       - GROQ_API_KEY1=${GROQ_API_KEY1}
       - GROQ_API_KEY2=${GROQ_API_KEY2}
@@ -17,7 +16,7 @@ services:
       - .env
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

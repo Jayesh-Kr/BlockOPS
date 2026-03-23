@@ -272,7 +272,7 @@ async def health_check():
         "service": "AI Agent Builder",
         "blockchain": "Arbitrum Sepolia",
         "ai_providers": {
-            "primary": "Groq (moonshotai/kimi-k2-instruct-0905)" if GROQ_API_KEY else "Not configured",
+            "primary": "Groq (moonshotai/kimi-k2-instruct-0905)" if groq_clients else "Not configured",
             "fallback": "Google Gemini 2.0 Flash" if GEMINI_API_KEY else "Not configured"
         },
         "backend_url": BACKEND_URL
