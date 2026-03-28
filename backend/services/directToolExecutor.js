@@ -53,6 +53,70 @@ function extractEmailFromText(text = '') {
   return match ? match[0] : null;
 }
 
+function isLikelyPlaceholderValue(value) {
+  if (typeof value !== 'string') return false;
+  return /\$\$?\w+\.[A-Za-z0-9_.]+/.test(value) || /\{\{.*\}\}|\{.*\}/.test(value);
+}
+
+function isLikelyPlaceholderEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return false;
+  if (isLikelyPlaceholderValue(normalized)) return true;
+  if (normalized === 'user@example.com') return true;
+  if (/@example\.com$/.test(normalized)) return true;
+  if (normalized.includes('your@email')) return true;
+  return false;
+}
+
+function selectRecipientEmail({ explicitRecipient, defaultEmailTo, userEmail, fallbackEmail }) {
+  if (explicitRecipient && !isLikelyPlaceholderEmail(explicitRecipient)) {
+    return explicitRecipient;
+  }
+  return defaultEmailTo || userEmail || fallbackEmail || explicitRecipient || null;
+}
+
+function getLatestSuccessfulResult(previousResults = []) {
+  return [...previousResults].reverse().find(result => result?.success && result?.result)?.result || null;
+}
+
+function readPathWithAliases(source, path) {
+  if (!source || !path) return undefined;
+  const aliasMap = {
+    txHash: ['txHash', 'transactionHash', 'hash'],
+    transactionHash: ['transactionHash', 'txHash', 'hash'],
+    hash: ['hash', 'transactionHash', 'txHash'],
+    status: ['status']
+  };
+
+  let current = source;
+  for (const segment of path.split('.')) {
+    if (current == null) return undefined;
+
+    if (Object.prototype.hasOwnProperty.call(current, segment)) {
+      current = current[segment];
+      continue;
+    }
+
+    const aliases = aliasMap[segment] || [];
+    const matchedAlias = aliases.find(alias => Object.prototype.hasOwnProperty.call(current, alias));
+    if (matchedAlias) {
+      current = current[matchedAlias];
+      continue;
+    }
+
+    return undefined;
+  }
+
+  return current;
+}
+
+function stringifyInterpolatedValue(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
 function extractAmountFromText(text = '') {
   // Prefer "transfer/send <amount> [ETH]" patterns.
   const explicitMatch = text.match(/(?:transfer|send|pay|move)\s+([0-9]+(?:\.[0-9]+)?)/i);
@@ -115,6 +179,12 @@ function generateEmailFromPreviousResults(previousResults = [], fallbackMessage 
       return hash ? `- tx_status: ${status} (${hash})` : `- tx_status: ${status}`;
     }
 
+    if (toolName === 'lookup_transaction') {
+      const status = result?.result?.receipt?.status || result?.result?.status || 'unknown';
+      const hash = result?.result?.hash || result?.result?.txHash;
+      return hash ? `- lookup_transaction: ${status} (${hash})` : `- lookup_transaction: ${status}`;
+    }
+
     if (toolName === 'get_balance') {
       const balance = result?.result?.balance;
       const address = result?.result?.address;
@@ -125,7 +195,7 @@ function generateEmailFromPreviousResults(previousResults = [], fallbackMessage 
   }).filter(Boolean);
 
   const subject =
-    previousResults.some(r => r?.tool === 'tx_status')
+    previousResults.some(r => r?.tool === 'tx_status' || r?.tool === 'lookup_transaction')
       ? 'Transaction Status Confirmation'
       : previousResults.some(r => r?.tool === 'transfer')
         ? 'Transfer Update'
@@ -266,13 +336,14 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       break;
     }
     case 'send_email': {
+      const explicitRecipient = params.to || params.email || params.recipient;
       const to =
-        params.to ||
-        params.email ||
-        params.recipient ||
-        executionContext.defaultEmailTo ||
-        executionContext.userEmail ||
-        extractEmailFromText(fallbackMessage);
+        selectRecipientEmail({
+          explicitRecipient,
+          defaultEmailTo: executionContext.defaultEmailTo,
+          userEmail: executionContext.userEmail,
+          fallbackEmail: extractEmailFromText(fallbackMessage)
+        });
       const subject =
         params.subject ||
         params.title ||
@@ -799,6 +870,26 @@ function interpolateParameters(params, previousResults) {
       resultsByTool[result.tool] = result.result;
     }
   }
+  const latestResult = getLatestSuccessfulResult(previousResults);
+
+  const applyTemplateInterpolation = (input) => {
+    if (typeof input !== 'string') return input;
+    let value = input;
+
+    value = value.replace(/\$\$PREVIOUS_RESULT\.([A-Za-z0-9_.]+)/g, (_match, path) => {
+      const resolved = readPathWithAliases(latestResult, path);
+      return resolved === undefined ? _match : stringifyInterpolatedValue(resolved);
+    });
+
+    value = value.replace(/\$([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z0-9_.]+)/g, (_match, toolName, path) => {
+      const toolResult = resultsByTool[toolName];
+      if (!toolResult) return _match;
+      const resolved = readPathWithAliases(toolResult, path);
+      return resolved === undefined ? _match : stringifyInterpolatedValue(resolved);
+    });
+
+    return value;
+  };
 
   // Helper to extract numeric price from fetch_price result
   const extractPrice = (result) => {
@@ -871,6 +962,7 @@ function interpolateParameters(params, previousResults) {
   Object.keys(interpolated).forEach(key => {
     if (typeof interpolated[key] === 'string') {
       let value = interpolated[key];
+      value = applyTemplateInterpolation(value);
       
       // Replace price-related placeholders
       for (const result of previousResults) {
@@ -911,21 +1003,38 @@ function interpolateStepParameters(step, previousResults, fallbackMessage = '', 
     }
   }
 
+  if (tool === 'lookup_transaction') {
+    if (interpolated.txHash && isLikelyPlaceholderValue(interpolated.txHash)) {
+      delete interpolated.txHash;
+    }
+    if (!interpolated.txHash && !interpolated.hash && !interpolated.tx_hash) {
+      const latestTransfer = [...previousResults].reverse().find(r => r?.tool === 'transfer' && r?.success);
+      const transferHash = latestTransfer?.result?.transactionHash || latestTransfer?.result?.txHash || latestTransfer?.result?.hash;
+      if (transferHash) {
+        interpolated.txHash = transferHash;
+      }
+    }
+  }
+
   if (tool === 'send_email') {
     const generated = generateEmailFromPreviousResults(previousResults, fallbackMessage);
 
-    if (!interpolated.to) {
-      interpolated.to =
-        executionContext.defaultEmailTo ||
-        executionContext.userEmail ||
-        extractEmailFromText(fallbackMessage);
-    }
+    interpolated.to = selectRecipientEmail({
+      explicitRecipient: interpolated.to,
+      defaultEmailTo: executionContext.defaultEmailTo,
+      userEmail: executionContext.userEmail,
+      fallbackEmail: extractEmailFromText(fallbackMessage)
+    });
+
+    const hasUnresolvedTemplateInText =
+      typeof interpolated.text === 'string' &&
+      isLikelyPlaceholderValue(interpolated.text);
 
     if (!interpolated.subject) {
       interpolated.subject = generated.subject;
     }
 
-    if (!interpolated.text && !interpolated.html) {
+    if ((!interpolated.text && !interpolated.html) || hasUnresolvedTemplateInText) {
       interpolated.text = generated.text;
     }
   }
