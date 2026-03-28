@@ -134,7 +134,7 @@ export function UserProfile({ onLogout }: UserProfileProps) {
                   <span className="text-xs font-medium">Set Up Agent Wallet</span>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Add your private key to enable transactions
+                  Add your private key (stored with Lit encryption) to enable transactions
                 </p>
               </DropdownMenuItem>
               <DropdownMenuSeparator />

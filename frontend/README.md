@@ -12,6 +12,12 @@ This is the frontend application for BlockOps, built with [Next.js](https://next
 - 📊 **Real-time Updates** - See your workflows execute in real-time
 - 🔍 **Contract Explorer** - Interact with any deployed smart contract like a block explorer (NEW!)
 
+## Lit Private Key Security
+
+Private keys are stored as Lit-encrypted ciphertext (not plaintext).
+
+See setup instructions: [LIT_PROTOCOL_SETUP.md](./LIT_PROTOCOL_SETUP.md)
+
 ## New: Contract Explorer
 
 The Contract Explorer allows you to interact with any deployed smart contract by simply entering its address. Features include:

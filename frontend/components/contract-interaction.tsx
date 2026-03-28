@@ -12,6 +12,7 @@ import { Loader2, Search, Wallet, AlertCircle, CheckCircle2, ExternalLink, Send,
 import { toast } from "@/components/ui/use-toast"
 import { ethers } from "ethers"
 import { useAuth } from "@/lib/auth"
+import { decryptStoredPrivateKey, hasStoredSigningKey } from "@/lib/lit-private-key"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -360,7 +361,7 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
 
   const executeWriteFunction = async (func: ContractFunction) => {
     // Check if user has either agent wallet or Privy wallet
-    const hasAgentWallet = dbUser?.private_key
+    const hasAgentWallet = hasStoredSigningKey(dbUser?.private_key)
     const hasPrivyWallet = isWalletLogin && privyWalletAddress
     
     if (!contractABI || (!hasAgentWallet && !hasPrivyWallet)) {
@@ -381,7 +382,12 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
       let contract: ethers.Contract
       
       if (hasAgentWallet) {
-        const wallet = new ethers.Wallet(dbUser.private_key!, provider)
+        const decryptedPrivateKey = await decryptStoredPrivateKey(dbUser?.private_key)
+        if (!decryptedPrivateKey) {
+          throw new Error("No valid agent wallet key found. Please set up your wallet again.")
+        }
+
+        const wallet = new ethers.Wallet(decryptedPrivateKey, provider)
         contract = new ethers.Contract(contractAddress, contractABI, wallet)
       } else if (hasPrivyWallet && window.ethereum) {
         try {
@@ -459,7 +465,7 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
 
       if (isExecutionCommand) {
         // --- Execution flow (existing) - requires wallet ---
-        const privateKey = dbUser?.private_key
+        const privateKey = await decryptStoredPrivateKey(dbUser?.private_key)
         
         if (!privateKey) {
           setChatMessages(prev => [...prev, { 
@@ -546,17 +552,26 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
 
   // Handle execution confirmation
   const handleExecuteConfirmation = async () => {
-    if (!executionPlan || !dbUser?.private_key) return
+    if (!executionPlan) return
 
     setIsChatLoading(true)
     setChatMessages(prev => [...prev, { role: 'user', content: 'yes, execute' }])
 
     try {
+      const privateKey = await decryptStoredPrivateKey(dbUser?.private_key)
+      if (!privateKey) {
+        setChatMessages(prev => [...prev, {
+          role: 'assistant',
+          content: 'No valid signing key found. Please set up your wallet again before execution.',
+        }])
+        return
+      }
+
       // Execute with confirmation
       const execResponse = await executeNaturalLanguageCommand(
         contractAddress,
         `Execute ${executionPlan.functionName}`, // Command doesn't matter now, backend uses plan
-        dbUser.private_key,
+        privateKey,
         true // Confirm execution
       )
 
@@ -599,7 +614,7 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
   const renderFunctionCard = (func: ContractFunction, isWrite: boolean) => {
     const result = functionResults[func.name]
     const isExecuting = executingFunction === func.name
-    const hasWallet = dbUser?.private_key || (isWalletLogin && privyWalletAddress)
+    const hasWallet = hasStoredSigningKey(dbUser?.private_key) || (isWalletLogin && privyWalletAddress)
 
     return (
       <AccordionItem key={func.name} value={func.name} className="border-b last:border-b-0">

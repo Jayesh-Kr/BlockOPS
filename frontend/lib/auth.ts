@@ -3,6 +3,7 @@
 import { usePrivy, useWallets } from '@privy-io/react-auth'
 import { useEffect, useState } from 'react'
 import { supabase, type User } from './supabase'
+import { hasStoredSigningKey } from './lit-private-key'
 
 export function useAuth() {
   const { ready, authenticated, user, login, logout } = usePrivy()
@@ -68,7 +69,7 @@ export function useAuth() {
         setDbUser(existingUser)
         
         // Check if user needs to set up private key (only once per session)
-        if (!existingUser.private_key && !hasCheckedPrivateKey) {
+        if (!hasStoredSigningKey(existingUser.private_key) && !hasCheckedPrivateKey) {
           setShowPrivateKeySetup(true)
           setHasCheckedPrivateKey(true)
         }

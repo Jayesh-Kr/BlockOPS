@@ -17,7 +17,7 @@ export const supabase = createClient(supabaseUrl, supabaseKey)
 
 export interface User {
   id: string // Privy DID (format: did:privy:xxxxx)
-  private_key: string | null
+  private_key: string | null // Lit ciphertext payload or legacy plaintext key
   wallet_address: string | null
   created_at: string
   updated_at: string

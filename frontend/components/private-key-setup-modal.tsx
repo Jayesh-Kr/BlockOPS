@@ -1,6 +1,5 @@
 "use client"
 
-import * as React from "react"
 import { useState } from "react"
 import { Key, Eye, EyeOff, AlertCircle, CheckCircle2 } from "lucide-react"
 import {
@@ -16,6 +15,7 @@ import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { supabase } from "@/lib/supabase"
 import { toast } from "@/components/ui/use-toast"
+import { encryptPrivateKeyForStorage, normalizePrivateKey } from "@/lib/lit-private-key"
 
 interface PrivateKeySetupModalProps {
   open: boolean
@@ -34,12 +34,6 @@ export function PrivateKeySetupModal({
   const [showPrivateKey, setShowPrivateKey] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  // Debug logging
-  React.useEffect(() => {
-    console.log('PrivateKeySetupModal - open state:', open)
-    console.log('PrivateKeySetupModal - userId:', userId)
-  }, [open, userId])
 
   const validatePrivateKey = (key: string): boolean => {
     // Remove 0x prefix if present
@@ -67,34 +61,34 @@ export function PrivateKeySetupModal({
     setIsLoading(true)
 
     try {
-      // Ensure private key has 0x prefix
-      const formattedKey = privateKey.trim().startsWith('0x') 
-        ? privateKey.trim() 
-        : `0x${privateKey.trim()}`
+      const formattedKey = normalizePrivateKey(privateKey.trim())
 
       // Derive wallet address from private key
       const { ethers } = await import('ethers')
       const wallet = new ethers.Wallet(formattedKey)
       const walletAddress = wallet.address
 
+      // Encrypt private key with Lit before persisting
+      const litEncryptedPayload = await encryptPrivateKeyForStorage(formattedKey)
+
       // Update user in database
       const { error: updateError } = await supabase
         .from('users')
         .update({
-          private_key: formattedKey,
+          private_key: litEncryptedPayload,
           wallet_address: walletAddress,
         })
         .eq('id', userId)
 
       if (updateError) {
         console.error('Error updating user:', updateError)
-        setError("Failed to save private key. Please try again.")
+        setError("Failed to save wallet credentials. Please try again.")
         return
       }
 
       toast({
         title: "Success!",
-        description: "Your agent wallet has been set up successfully.",
+        description: "Your agent wallet has been set up with Lit-secured key storage.",
       })
 
       // Clear the input for security
@@ -108,7 +102,7 @@ export function PrivateKeySetupModal({
       onOpenChange(false)
     } catch (error) {
       console.error('Error setting up private key:', error)
-      setError("Invalid private key or failed to derive wallet address. Please check your private key and try again.")
+      setError("Failed to secure and store your private key with Lit. Please check your key and Lit configuration, then try again.")
     } finally {
       setIsLoading(false)
     }
@@ -130,7 +124,7 @@ export function PrivateKeySetupModal({
             Set Up Agent Wallet
           </DialogTitle>
           <DialogDescription>
-            Add your private key to enable your agent to execute blockchain transactions on your behalf.
+            Add your private key to enable your agent to execute blockchain transactions on your behalf. Your key is encrypted with Lit Protocol before storage.
           </DialogDescription>
         </DialogHeader>
 
@@ -167,7 +161,7 @@ export function PrivateKeySetupModal({
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Your private key is encrypted and stored securely. It will be used to sign transactions for your agents.
+              Your private key is encrypted via Lit Protocol and only decrypted when a signing operation needs it.
             </p>
           </div>
 
@@ -181,7 +175,8 @@ export function PrivateKeySetupModal({
           <Alert>
             <CheckCircle2 className="h-4 w-4" />
             <AlertDescription className="text-xs">
-              <strong>Security Note:</strong> Your private key is stored encrypted in the database. 
+              <strong>Security Note:</strong> Your private key is never stored in plaintext.
+              It is encrypted by Lit Protocol and only ciphertext is persisted.
               Never share your private key with anyone. You can skip this step and add it later from your profile.
             </AlertDescription>
           </Alert>
