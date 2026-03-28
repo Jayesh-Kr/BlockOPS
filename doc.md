@@ -126,7 +126,7 @@ All AI operations use a cascading fallback pattern for reliability:
 
 ## Technical Architecture
 
-BlockOps is a full-stack application composed of five services:
+BlockOps is a full-stack application composed of four services:
 
 | Layer | Technology | Port |
 |---|---|---|
@@ -134,7 +134,6 @@ BlockOps is a full-stack application composed of five services:
 | Backend API | Express.js, ethers.js v6 | 3000 |
 | AI Agent Service | FastAPI, Groq / Gemini with function calling | 8000 |
 | Workflow Generator | FastAPI, Gemini 2.0 Flash | 8001 |
-| Orbit AI Backend | FastAPI, Gemini 2.0 Flash (multi-turn conversational) | 8002 |
 | Blockchain | Arbitrum Sepolia (Chain ID: 421614) | — |
 | Smart Contracts | Arbitrum Stylus (Rust → WASM), Solidity | — |
 | Auth | Privy (Web3 + Web2) | — |
@@ -152,7 +151,7 @@ Payments flow through a custom **PaymentEscrow contract** ([`0x185eba222e50dedae
 - **Stylus-powered contracts** — Rust-based ERC-20 and ERC-721 factories offer gas-efficient WASM execution on Arbitrum
 - **Composable agent workflows** — chain multiple blockchain tools into sequential, automated pipelines
 - **Natural language contract interaction** — talk to any verified smart contract in plain English
-- **Orbit L3 chain deployment** — configure and deploy custom L3 chains through a conversational AI
+- **Orbit L3 chain deployment** — configure and deploy custom L3 chains
 - **Intelligent multi-tool execution** — AI plans and sequences complex operations with parameter passing between steps
 - **API-first agents** — every agent exposes a REST API, enabling programmatic access from any external system
 - **Secure key management** — encrypted private key storage in Supabase with backend-authorized payment execution
