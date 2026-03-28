@@ -7,6 +7,11 @@ const { fireEvent } = require('../services/webhookService');
 
 const IN_MEMORY_MESSAGE_LIMIT = 30;
 const inMemoryConversations = new Map();
+const UUID_V4_LIKE_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isUuidLike(value) {
+  return typeof value === 'string' && UUID_V4_LIKE_REGEX.test(value);
+}
 
 function createTempConversationId() {
   return `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -129,8 +134,17 @@ async function chat(req, res) {
     let convId = conversationId;
     let isNewConversation = false;
     let messages = [];
-    let useSupabase = !!supabase; // Track whether we're using Supabase for this request
+    const idsAreSupabaseCompatible =
+      isUuidLike(agentId) &&
+      isUuidLike(userId) &&
+      (!conversationId || isUuidLike(conversationId));
+
+    let useSupabase = !!supabase && idsAreSupabaseCompatible; // Track whether we're using Supabase for this request
     const conversationTitle = truncatedMessage.slice(0, 100);
+
+    if (!!supabase && !idsAreSupabaseCompatible) {
+      console.log('[Chat] Non-UUID ids detected (likely Telegram/generic mode), using memory-only conversation mode');
+    }
 
     if (useSupabase) {
       // Use Supabase for persistent conversation memory
