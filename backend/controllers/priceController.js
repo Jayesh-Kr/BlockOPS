@@ -101,7 +101,7 @@ const parseCryptoQuery = async (query) => {
   if (geminiClient) {
     try {
       const model = geminiClient.getGenerativeModel({
-        model: 'gemini-3.1-flash-lite',
+        model: 'gemini-3.1-flash-lite-preview',
         generationConfig: {
           temperature: 0.1,
         },

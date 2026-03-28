@@ -205,7 +205,7 @@ async def create_workflow(request: WorkflowRequest):
                 logger.info("Attempting Gemini API (Fallback)...")
                 
                 model = genai.GenerativeModel(
-                    model_name='gemini-3.1-flash-lite',
+                    model_name='gemini-3.1-flash-lite-preview',
                     generation_config={
                         "temperature": request.temperature,
                         "max_output_tokens": request.max_tokens,

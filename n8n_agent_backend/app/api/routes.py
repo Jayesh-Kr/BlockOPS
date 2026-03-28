@@ -211,7 +211,7 @@ Response:
         if GEMINI_API_KEY:
             try:
                 model = genai.GenerativeModel(
-                    model_name='gemini-3.1-flash-lite',
+                    model_name='gemini-3.1-flash-lite-preview',
                     generation_config={
                         "temperature": 0.5,
                         "top_p": 0.8,

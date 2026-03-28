@@ -191,7 +191,7 @@ def process_agent_conversation(
 
         # Initialize Gemini model with fallback chain
         model_names = [
-            'gemini-3.1-flash-lite',
+            'gemini-3.1-flash-lite-preview',
             'gemini-2.0-flash',
             'gemini-1.5-flash-002',
             'gemini-1.5-flash-001',

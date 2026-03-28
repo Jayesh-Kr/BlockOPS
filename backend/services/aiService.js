@@ -134,7 +134,7 @@ async function chatWithAI(messages, model = 'moonshotai/kimi-k2-instruct-0905', 
 async function chatWithGemini(messages, options = {}) {
   try {
     const model = genAI.getGenerativeModel({ 
-      model: 'gemini-3.1-flash-lite',
+      model: 'gemini-3.1-flash-lite-preview',
       generationConfig: {
         temperature: options.temperature || 0.7,
         maxOutputTokens: options.maxTokens || 1024,
