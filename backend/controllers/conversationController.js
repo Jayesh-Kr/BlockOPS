@@ -5,6 +5,89 @@ const { intelligentToolRouting, convertToAgentFormat } = require('../services/to
 const { executeToolsDirectly: executeToolsDirectlyService, formatToolResponse } = require('../services/directToolExecutor');
 const { fireEvent } = require('../services/webhookService');
 
+const IN_MEMORY_MESSAGE_LIMIT = 30;
+const inMemoryConversations = new Map();
+
+function createTempConversationId() {
+  return `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getLatestInMemoryConversationId(userId, agentId) {
+  let latestConversation = null;
+
+  for (const conversation of inMemoryConversations.values()) {
+    if (conversation.userId !== userId || conversation.agentId !== agentId) {
+      continue;
+    }
+
+    if (!latestConversation || new Date(conversation.updatedAt) > new Date(latestConversation.updatedAt)) {
+      latestConversation = conversation;
+    }
+  }
+
+  return latestConversation?.id || null;
+}
+
+function getOrCreateInMemoryConversation({ conversationId, userId, agentId, title }) {
+  let convId = conversationId;
+  let isNewConversation = false;
+
+  if (!convId) {
+    convId = getLatestInMemoryConversationId(userId, agentId) || createTempConversationId();
+    isNewConversation = !inMemoryConversations.has(convId);
+  } else {
+    isNewConversation = !inMemoryConversations.has(convId);
+  }
+
+  if (!inMemoryConversations.has(convId)) {
+    inMemoryConversations.set(convId, {
+      id: convId,
+      userId,
+      agentId,
+      title: title || 'Conversation',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: []
+    });
+  }
+
+  const conversation = inMemoryConversations.get(convId);
+  conversation.updatedAt = new Date().toISOString();
+  if (!conversation.title && title) {
+    conversation.title = title;
+  }
+
+  return { conversation, convId, isNewConversation };
+}
+
+function addInMemoryMessage(conversationId, role, content, toolCalls = null) {
+  const conversation = inMemoryConversations.get(conversationId);
+  if (!conversation) {
+    return;
+  }
+
+  const message = {
+    role,
+    content,
+    created_at: new Date().toISOString()
+  };
+
+  if (toolCalls) {
+    message.tool_calls = toolCalls;
+  }
+
+  conversation.messages.push(message);
+  if (conversation.messages.length > IN_MEMORY_MESSAGE_LIMIT) {
+    conversation.messages = conversation.messages.slice(-IN_MEMORY_MESSAGE_LIMIT);
+  }
+  conversation.updatedAt = new Date().toISOString();
+}
+
+function getInMemoryMessages(conversationId) {
+  const conversation = inMemoryConversations.get(conversationId);
+  return conversation?.messages || [];
+}
+
 /**
  * Main chat endpoint - handles conversation and AI response
  * POST /api/chat
@@ -47,6 +130,7 @@ async function chat(req, res) {
     let isNewConversation = false;
     let messages = [];
     let useSupabase = !!supabase; // Track whether we're using Supabase for this request
+    const conversationTitle = truncatedMessage.slice(0, 100);
 
     if (useSupabase) {
       // Use Supabase for persistent conversation memory
@@ -57,7 +141,7 @@ async function chat(req, res) {
           .insert({ 
             agent_id: agentId, 
             user_id: userId, 
-            title: truncatedMessage.slice(0, 100) // Use first 100 chars as title
+            title: conversationTitle // Use first 100 chars as title
           })
           .select()
           .single();
@@ -67,10 +151,16 @@ async function chat(req, res) {
           // If it's a foreign key error (agent doesn't exist), fall back to in-memory mode
           if (error.code === '23503' || error.code === '22P02') {
             console.log('[Chat] Agent not in database or invalid ID, falling back to memory-only mode');
-            convId = `temp-${Date.now()}`;
-            isNewConversation = true;
-            messages = [{ role: 'user', content: truncatedMessage, created_at: new Date().toISOString() }];
-            // Disable Supabase for the rest of this request
+            const memoryConversation = getOrCreateInMemoryConversation({
+              conversationId: convId,
+              userId,
+              agentId,
+              title: conversationTitle
+            });
+            convId = memoryConversation.convId;
+            isNewConversation = memoryConversation.isNewConversation;
+            addInMemoryMessage(convId, 'user', truncatedMessage);
+            messages = getInMemoryMessages(convId);
             useSupabase = false;
           } else {
             throw new Error('Failed to create conversation');
@@ -93,9 +183,19 @@ async function chat(req, res) {
 
         if (msgError) {
           console.error('Error saving user message:', msgError);
-          // Don't throw, just log and continue in memory-only mode
-          console.log('[Chat] Continuing in memory-only mode');
-          messages = [{ role: 'user', content: truncatedMessage, created_at: new Date().toISOString() }];
+          console.log('[Chat] Switching to in-memory mode after save error');
+          useSupabase = false;
+
+          const memoryConversation = getOrCreateInMemoryConversation({
+            conversationId: convId,
+            userId,
+            agentId,
+            title: conversationTitle
+          });
+          convId = memoryConversation.convId;
+          isNewConversation = memoryConversation.isNewConversation;
+          addInMemoryMessage(convId, 'user', truncatedMessage);
+          messages = getInMemoryMessages(convId);
         }
       }
 
@@ -109,8 +209,19 @@ async function chat(req, res) {
 
         if (fetchError) {
           console.error('Error fetching messages:', fetchError);
-          console.log('[Chat] Using in-memory messages instead');
-          messages = [{ role: 'user', content: truncatedMessage, created_at: new Date().toISOString() }];
+          console.log('[Chat] Switching to in-memory mode after fetch error');
+          useSupabase = false;
+
+          const memoryConversation = getOrCreateInMemoryConversation({
+            conversationId: convId,
+            userId,
+            agentId,
+            title: conversationTitle
+          });
+          convId = memoryConversation.convId;
+          isNewConversation = memoryConversation.isNewConversation;
+          addInMemoryMessage(convId, 'user', truncatedMessage);
+          messages = getInMemoryMessages(convId);
         } else {
           messages = messageData;
         }
@@ -118,13 +229,16 @@ async function chat(req, res) {
     } else {
       // In-memory mode (no persistence) - Supabase not configured
       console.log('[Chat] Running in memory-only mode (Supabase not configured)');
-      convId = conversationId || `temp-${Date.now()}`;
-      isNewConversation = !conversationId;
-      
-      // Create minimal message history for context
-      messages = [
-        { role: 'user', content: truncatedMessage, created_at: new Date().toISOString() }
-      ];
+      const memoryConversation = getOrCreateInMemoryConversation({
+        conversationId: convId,
+        userId,
+        agentId,
+        title: conversationTitle
+      });
+      convId = memoryConversation.convId;
+      isNewConversation = memoryConversation.isNewConversation;
+      addInMemoryMessage(convId, 'user', truncatedMessage);
+      messages = getInMemoryMessages(convId);
     }
 
     // Check if the message requires tools using intelligent AI routing
@@ -165,19 +279,23 @@ async function chat(req, res) {
       const rejectionMessage = "I'm a blockchain operations assistant and can only help with blockchain-related tasks such as checking cryptocurrency prices, wallet balances, deploying tokens/NFTs, and managing transactions. Please ask me something related to blockchain or crypto operations.";
       
       // Save rejection message
-      await supabase
-        .from('conversation_messages')
-        .insert({ 
-          conversation_id: convId, 
-          role: 'assistant', 
-          content: rejectionMessage
-        });
+      if (useSupabase) {
+        await supabase
+          .from('conversation_messages')
+          .insert({ 
+            conversation_id: convId, 
+            role: 'assistant', 
+            content: rejectionMessage
+          });
+      } else {
+        addInMemoryMessage(convId, 'assistant', rejectionMessage);
+      }
 
       return res.json({
         conversationId: convId,
         message: rejectionMessage,
         isNewConversation,
-        messageCount: messages.length + 2,
+        messageCount: useSupabase ? messages.length + 1 : getInMemoryMessages(convId).length,
         offTopicRejection: true
       });
     }
@@ -262,13 +380,15 @@ async function chat(req, res) {
                 role: 'assistant',
                 content: signerMessage
               });
+          } else {
+            addInMemoryMessage(convId, 'assistant', signerMessage);
           }
 
           return res.json({
             conversationId: convId,
             message: signerMessage,
             isNewConversation,
-            messageCount: messages.length + 2,
+            messageCount: useSupabase ? messages.length + 1 : getInMemoryMessages(convId).length,
             needsMoreInfo: true,
             missingInfo: finalMissingInfo,
             signerRequired: true
@@ -286,13 +406,15 @@ async function chat(req, res) {
               role: 'assistant', 
               content: missingInfoMessage
             });
+        } else {
+          addInMemoryMessage(convId, 'assistant', missingInfoMessage);
         }
 
         return res.json({
           conversationId: convId,
           message: missingInfoMessage,
           isNewConversation,
-          messageCount: messages.length + 2,
+          messageCount: useSupabase ? messages.length + 1 : getInMemoryMessages(convId).length,
           needsMoreInfo: true,
           missingInfo: finalMissingInfo
         });
@@ -480,7 +602,8 @@ async function chat(req, res) {
         // Don't throw - we already have the response
       }
     } else {
-      console.log('[Chat] AI response generated (not persisted - Supabase not configured)');
+      addInMemoryMessage(convId, 'assistant', aiResponse, toolResults);
+      console.log('[Chat] AI response generated and stored in memory');
     }
 
     // Return response
@@ -488,7 +611,7 @@ async function chat(req, res) {
       conversationId: convId,
       message: aiResponse,
       isNewConversation,
-      messageCount: messages.length + 2, // +2 for the messages we just added
+      messageCount: useSupabase ? messages.length + 1 : getInMemoryMessages(convId).length,
       toolResults,
       hasTools: !!toolResults,
       memoryMode: useSupabase ? 'persistent' : 'temporary'

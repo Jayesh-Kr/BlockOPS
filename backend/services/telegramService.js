@@ -28,6 +28,33 @@ const BACKEND_URL  = process.env.BACKEND_URL || `http://localhost:${process.env.
 const MASTER_KEY   = process.env.MASTER_API_KEY || '';
 
 const TG_API = BOT_TOKEN ? `https://api.telegram.org/bot${BOT_TOKEN}` : null;
+const telegramConversationSessions = new Map();
+
+function getConversationSessionKey(chatId, agentId) {
+  return `${String(chatId)}:${String(agentId || 'generic')}`;
+}
+
+function getSessionConversationId(chatId, agentId) {
+  const key = getConversationSessionKey(chatId, agentId);
+  return telegramConversationSessions.get(key) || null;
+}
+
+function setSessionConversationId(chatId, agentId, conversationId) {
+  if (!conversationId) {
+    return;
+  }
+  const key = getConversationSessionKey(chatId, agentId);
+  telegramConversationSessions.set(key, conversationId);
+}
+
+function clearChatConversationSessions(chatId) {
+  const prefix = `${String(chatId)}:`;
+  for (const key of telegramConversationSessions.keys()) {
+    if (key.startsWith(prefix)) {
+      telegramConversationSessions.delete(key);
+    }
+  }
+}
 
 // Escape characters that break Telegram's legacy Markdown parser
 function mdEscape(str) {
@@ -251,6 +278,8 @@ async function handleConnect(chatId, args) {
     return sendMessage(chatId, `⚠️ Something went wrong: ${error.message}`);
   }
 
+  clearChatConversationSessions(chatId);
+
   const toolCount = agent.enabled_tools?.length || 0;
   const toolList = agent.enabled_tools?.slice(0, 4).map(mdEscape).join(', ') || 'none specified';
 
@@ -300,6 +329,8 @@ async function handleDisconnect(chatId) {
     console.error('[Telegram] Disconnect error:', error);
     return sendMessage(chatId, `⚠️ Something went wrong: ${error.message}`);
   }
+
+  clearChatConversationSessions(chatId);
 
   await sendMessage(chatId,
     `✅ Disconnected from agent: *${mdEscape(agentName)}*\n\n` +
@@ -371,6 +402,8 @@ async function handleSwitch(chatId, args) {
     })
     .eq('chat_id', String(chatId));
 
+  clearChatConversationSessions(chatId);
+
   // Then connect to new agent
   await handleConnect(chatId, args);
 }
@@ -407,6 +440,7 @@ async function handleFreeText(chatId, text, user) {
   }
 
   const userId = `tg-user-${chatId}`;
+  const conversationId = getSessionConversationId(chatId, agentId);
 
   // Send "typing…" indicator
   await tgRequest('sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
@@ -416,6 +450,7 @@ async function handleFreeText(chatId, text, user) {
       agentId,
       userId,
       message: text,
+      conversationId,
       systemPrompt: agentConfig?.systemPrompt,       // null = use default
       enabledTools: agentConfig?.enabledTools,       // null = enable all
       walletAddress: agentConfig?.walletAddress      // optional pre-config
@@ -423,6 +458,10 @@ async function handleFreeText(chatId, text, user) {
       headers: { 'Content-Type': 'application/json', 'x-api-key': MASTER_KEY },
       timeout: 60000
     });
+
+    if (data?.conversationId) {
+      setSessionConversationId(chatId, agentId, data.conversationId);
+    }
 
     const reply = data.message || data.response || 'Done.';
 
