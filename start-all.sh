@@ -29,13 +29,6 @@ sudo docker-compose down
 sudo docker-compose up -d
 echo "✅ n8n_agent_backend started"
 
-# Start orbit_ai_backend with docker compose
-echo "🐳 Starting orbit_ai_backend..."
-cd /home/lviffy/Projects/blockops/orbit_ai_backend
-sudo docker-compose down
-sudo docker-compose up -d
-echo "✅ orbit_ai_backend started"
-
 # Start frontend with npm run dev
 echo "⚛️  Starting frontend..."
 cd /home/lviffy/Projects/blockops/frontend

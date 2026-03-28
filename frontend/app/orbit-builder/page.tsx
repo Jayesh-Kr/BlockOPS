@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { Layers, Settings, Shield, Zap, ChevronRight, Plus, List, User, Wallet, LogOut } from 'lucide-react';
 import { usePrivy, useWallets } from '@privy-io/react-auth';
-import { OrbitBuilderChat } from '@/components/orbit/OrbitBuilderChat';
 import { DeploymentStatus } from '@/components/orbit/DeploymentStatus';
 import { ConfigList } from '@/components/orbit/ConfigList';
 import { Badge } from '@/components/ui/badge';
@@ -130,12 +129,9 @@ export default function OrbitBuilderPage() {
           </TabsList>
 
           <TabsContent value="create">
-            <OrbitBuilderChat
-              onDeploymentStart={(depId) => {
-                setDeploymentId(depId);
-                setActiveTab('deployments');
-              }}
-            />
+            <div className="rounded-lg border border-border bg-muted/30 p-6 text-sm text-muted-foreground">
+              Orbit AI chat setup has been removed. Use the Deployments tab to manage existing Orbit deployments.
+            </div>
           </TabsContent>
 
           <TabsContent value="deployments">
