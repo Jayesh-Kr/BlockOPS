@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS agents (
   tools JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of tool configurations
   -- Tools structure: [{tool: string, next_tool: string | null, config: object}]
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused', 'archived')),
+  on_chain_id TEXT, -- ERC-8004 Identity Registry ID
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -110,6 +111,7 @@ CREATE TABLE IF NOT EXISTS tool_executions (
   success BOOLEAN DEFAULT true,
   execution_time_ms INTEGER,
   transaction_hash TEXT, -- For blockchain transactions
+  validation_hash TEXT, -- ERC-8004 Validation Registry request hash
   error_message TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

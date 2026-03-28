@@ -25,9 +25,11 @@ import {
   Wrench,
   Terminal,
   Code2,
+  Globe,
 } from "lucide-react"
 import { useAuth } from "@/lib/auth"
 import { getAgentsByUserId, deleteAgent } from "@/lib/agents"
+import { BLOCKCHAIN_BACKEND_URL, BLOCKCHAIN_API_KEY } from "@/lib/backend"
 import type { Agent } from "@/lib/supabase"
 import { AgentWalletModal } from "@/components/agent-wallet"
 import { UserProfile } from "@/components/user-profile"
@@ -69,6 +71,7 @@ export default function MyAgents() {
   const [selectedAgentForExport, setSelectedAgentForExport] = useState<Agent | null>(null)
   const [copiedItem, setCopiedItem] = useState<string | null>(null)
   const [walletModalOpen, setWalletModalOpen] = useState(false)
+  const [registeringAgentId, setRegisteringAgentId] = useState<string | null>(null)
 
   useEffect(() => {
     if (ready && !authenticated) {
@@ -109,6 +112,42 @@ export default function MyAgents() {
       setAgentToDelete(null)
     } catch (error) {
       console.error("Error deleting agent:", error)
+    }
+  }
+
+  const handleRegisterOnChain = async (agentId: string) => {
+    if (!user?.id) return
+    setRegisteringAgentId(agentId)
+    try {
+      const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${agentId}/register-on-chain`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': BLOCKCHAIN_API_KEY,
+        },
+        body: JSON.stringify({ userId: user.id }),
+      })
+
+      const data = await response.json()
+      if (data.success) {
+        toast({
+          title: "Success",
+          description: `Agent registered on-chain with ID ${data.onChainId}`,
+        })
+        // Refresh agent list to show the new ID
+        fetchAgents()
+      } else {
+        throw new Error(data.error || "Failed to register agent")
+      }
+    } catch (error: any) {
+      console.error("Error registering agent:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to register agent on-chain",
+        variant: "destructive",
+      })
+    } finally {
+      setRegisteringAgentId(null)
     }
   }
 
@@ -159,12 +198,6 @@ export default function MyAgents() {
           {/* Navigation */}
           <div className="mt-6 flex items-center gap-2">
             <Button asChild variant="outline" size="sm" className="h-8 text-xs font-medium">
-              <Link href="/orbit-builder">
-                <Layers className="mr-1.5 h-3.5 w-3.5" />
-                Orbit L3 Builder
-              </Link>
-            </Button>
-            <Button asChild variant="outline" size="sm" className="h-8 text-xs font-medium">
               <Link href="/contract-explorer">
                 <FileCode className="mr-1.5 h-3.5 w-3.5" />
                 Contract Explorer
@@ -208,6 +241,11 @@ export default function MyAgents() {
                       <Badge variant="secondary" className="text-[10px] font-normal px-1.5 py-0 h-4 shrink-0">
                         {agent.tools.length} {agent.tools.length === 1 ? "tool" : "tools"}
                       </Badge>
+                      {agent.on_chain_id && (
+                        <Badge variant="outline" className="text-[9px] font-medium px-1.5 py-0 h-4 shrink-0 border-primary/30 bg-primary/5 text-primary">
+                          ERC-8004 ID: {agent.on_chain_id}
+                        </Badge>
+                      )}
                     </div>
                     <p className="mt-0.5 text-xs text-muted-foreground truncate">
                       {agent.description || "No description"}
@@ -266,7 +304,20 @@ export default function MyAgents() {
                           <MoreVertical className="h-3.5 w-3.5" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-36">
+                      <DropdownMenuContent align="end" className="w-48">
+                        {!agent.on_chain_id && (
+                          <DropdownMenuItem 
+                            onClick={() => handleRegisterOnChain(agent.id)}
+                            disabled={registeringAgentId === agent.id}
+                          >
+                            {registeringAgentId === agent.id ? (
+                              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Globe className="mr-2 h-3.5 w-3.5" />
+                            )}
+                            Register On-Chain
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuItem onClick={() => handleAgentClick(agent.id)}>
                           <Pencil className="mr-2 h-3.5 w-3.5" />
                           Edit

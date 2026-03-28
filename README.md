@@ -2,9 +2,9 @@
 
 ## Introduction
 
-**BlockOps** is a no-code AI-powered platform that enables users to build, deploy, and interact with blockchain agents on Arbitrum Sepolia. The platform combines a visual drag-and-drop workflow builder with AI-powered natural language processing, allowing users to create sophisticated blockchain automation workflows without writing any code.
+BlockOps is a pioneering no-code, AI-powered platform designed to democratize blockchain automation. It enables users to build, deploy, and orchestrate sophisticated on-chain agents on Arbitrum Sepolia without writing a single line of code. By combining an intuitive visual drag-and-drop workflow builder with the power of Gemini 2.0 Flash AI, BlockOps allows anyone to transform natural language into executable blockchain workflows.
 
-The platform supports blockchain operations including **ERC-20 token deployment, ERC-721 NFT collection deployment, token transfers, and more**. All operations are powered by Arbitrum Stylus smart contracts and integrated with Gemini 2.0 Flash AI for intelligent agent interactions.
+Key capabilities include deploying gas-efficient ERC-20 and ERC-721 tokens via Arbitrum Stylus (Rust/WASM), and performing complex multi-step transactions. The platform integrates the x402 protocol for trustless payment escrows and leverages ERC-8004 for on-chain agent identity and reputation. Whether interacting through a chat interface or programmatically via REST APIs, BlockOps agents provide a secure, composable, and scalable solution for modern decentralized operations. From simple token transfers to complex cross-platform agent orchestration, BlockOps bridges the gap between AI and Web3 infrastructure.
 
 > **Note:** This is a complete full-stack application including frontend (Next.js), backend API (Express.js), AI agent services (FastAPI), and smart contracts (Rust/Stylus).
 
@@ -19,7 +19,8 @@ The platform supports blockchain operations including **ERC-20 token deployment,
 - **Frontend**: Next.js 15, React 19, TypeScript, Tailwind CSS, React Flow
 - **Backend**: Express.js, ethers.js v6
 - **AI Services**: FastAPI, Google Gemini 2.0 Flash
-- **Blockchain**: Arbitrum Sepolia, Stylus (Rust WASM contracts)
+- **Blockchain**: Arbitrum Sepolia, Stylus (Rust WASM contracts), **ERC-8004 Identity & Reputation**
+- **Autonomous Architecture**: Plan → Execute → Verify → Decide (PEVD) loop
 - **Authentication**: Privy Auth
 - **Database**: Supabase (PostgreSQL)
 
@@ -53,7 +54,12 @@ Getting started with BlockOps is simple! Follow these steps:
 6. **Interact with Your Agent**:
    - **UI Chat Interface**: Chat with your agent using natural language
    - **API Integration**: Use REST API calls with your unique API key
-   - For premium features, payments are handled via x402 protocol with USDC escrow
+- **ERC-8004 On-Chain Identity**: Every agent is registered as a unique NFT on Arbitrum Sepolia
+  - Identity Registry: `0x734C984AE7d64aa917D9D2e4B9C08A0CD6C0589B`
+  - Reputation Registry: `0xa497e1BFe08109D60A8F91AdEc868ffdD1e0055c`
+  - Validation Registry: `0xFab8731b8d1a978e78086179dC5494F0dbA1f6bE`
+- **Verifiable Reputation**: Agents build trust scores based on successful executions and x402 payments
+- For premium features, payments are handled via x402 protocol with USDC escrow
 
 7. **Execute Blockchain Actions** seamlessly on Arbitrum Sepolia
 
@@ -461,6 +467,41 @@ function setAuthorizedBackend(address backend, bool authorized) external onlyOwn
 ```bash
 cd contract/payment-contracts
 npx hardhat run scripts/deploy.js --network arbitrumSepolia
+```
+
+### ERC-8004 Registry Suite (Solidity)
+
+**Location:** `contract/erc8004-registries/contracts/`
+
+**Technology:** Solidity + Hardhat (EVM Cancun)
+
+**Key Features:**
+- **Identity Registry**: Every agent is registered as a unique ERC-721 NFT on Arbitrum Sepolia.
+- **Reputation Registry**: On-chain trust scores built via execution feedback and x402 payment proofs.
+- **Validation Registry**: Immutable "Pass/Fail" proofs for every agent action.
+- **Factory Pattern**: Unified deployment and initialization of the registry suite.
+
+**Deployed Addresses (Arbitrum Sepolia):**
+- **Identity Registry**: `0x734C984AE7d64aa917D9D2e4B9C08A0CD6C0589B`
+- **Reputation Registry**: `0xa497e1BFe08109D60A8F91AdEc868ffdD1e0055c`
+- **Validation Registry**: `0xFab8731b8d1a978e78086179dC5494F0dbA1f6bE`
+
+**Main Functions:**
+```solidity
+// Register a new agent identity (NFT)
+function registerAgent(address owner, string memory agentURI) public returns (uint256)
+
+// Provide reputation feedback
+function giveFeedback(uint256 agentId, uint8 value, uint256 weight, string memory tag, string memory context, bytes32 proofHash) public
+
+// Submit validation request for execution proof
+function validationRequest(address validator, uint256 agentId, string memory proofURI, bytes32 requestHash) public
+```
+
+**Deploy:**
+```bash
+cd contract/erc8004-registries
+npm run deploy
 ```
 
 ---

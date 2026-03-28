@@ -1,4 +1,4 @@
-import { BLOCKCHAIN_BACKEND_URL } from './backend'
+import { BLOCKCHAIN_BACKEND_URL, BLOCKCHAIN_API_KEY } from './backend'
 import type { Agent } from './supabase'
 
 type ToolConfig = Array<{ tool: string; next_tool: string | null }>
@@ -30,6 +30,7 @@ export async function createAgent(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'x-api-key': BLOCKCHAIN_API_KEY,
     },
     body: JSON.stringify({
       userId,
@@ -48,7 +49,11 @@ export async function createAgent(
 }
 
 export async function getAgentsByUserId(userId: string): Promise<Agent[]> {
-  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents?userId=${encodeURIComponent(userId)}`)
+  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents?userId=${encodeURIComponent(userId)}`, {
+    headers: {
+      'x-api-key': BLOCKCHAIN_API_KEY,
+    }
+  })
   const payload = await parseJson(response)
 
   if (!response.ok || !payload.success) {
@@ -59,7 +64,11 @@ export async function getAgentsByUserId(userId: string): Promise<Agent[]> {
 }
 
 export async function getAgentById(agentId: string): Promise<Agent | null> {
-  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}`)
+  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}`, {
+    headers: {
+      'x-api-key': BLOCKCHAIN_API_KEY,
+    }
+  })
   const payload = await parseJson(response)
 
   if (response.status === 404) {
@@ -89,6 +98,7 @@ export async function updateAgent(
     method: 'PATCH',
     headers: {
       'Content-Type': 'application/json',
+      'x-api-key': BLOCKCHAIN_API_KEY,
     },
     body: JSON.stringify(updates),
   })
@@ -104,6 +114,9 @@ export async function updateAgent(
 export async function deleteAgent(agentId: string): Promise<void> {
   const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}`, {
     method: 'DELETE',
+    headers: {
+      'x-api-key': BLOCKCHAIN_API_KEY,
+    }
   })
   const payload = await parseJson(response)
 

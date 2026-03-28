@@ -14,7 +14,8 @@ import type {
 
 // Backend URLs from environment
 const AI_AGENT_BACKEND_URL = process.env.NEXT_PUBLIC_AI_AGENT_BACKEND_URL || 'http://localhost:8000'
-const BLOCKCHAIN_BACKEND_URL = process.env.NEXT_PUBLIC_BLOCKCHAIN_BACKEND_URL || 'http://localhost:3000'
+const BLOCKCHAIN_BACKEND_URL = process.env.NEXT_PUBLIC_BLOCKCHAIN_BACKEND_URL || 'http://localhost:8003'
+const BLOCKCHAIN_API_KEY = process.env.NEXT_PUBLIC_BLOCKCHAIN_API_KEY || 'REPLACE_ME_WITH_A_RANDOM_SECRET'
 
 // ============================================
 // CONVERSATION MEMORY API (Port 3000)
@@ -96,6 +97,7 @@ export async function sendChatWithMemory(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'x-api-key': BLOCKCHAIN_API_KEY,
     },
     body: JSON.stringify(request),
   })
@@ -118,7 +120,11 @@ export async function listConversations(
   const params = new URLSearchParams({ userId })
   if (agentId) params.append('agentId', agentId)
 
-  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/api/conversations?${params}`)
+  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/api/conversations?${params}`, {
+    headers: {
+      'x-api-key': BLOCKCHAIN_API_KEY,
+    }
+  })
   
   if (!response.ok) {
     throw new Error('Failed to list conversations')
@@ -134,7 +140,12 @@ export async function getConversationMessages(
   conversationId: string
 ): Promise<{ messages: ConversationMessage[]; count: number }> {
   const response = await fetch(
-    `${BLOCKCHAIN_BACKEND_URL}/api/conversations/${conversationId}/messages`
+    `${BLOCKCHAIN_BACKEND_URL}/api/conversations/${conversationId}/messages`,
+    {
+      headers: {
+        'x-api-key': BLOCKCHAIN_API_KEY,
+      }
+    }
   )
   
   if (!response.ok) {
@@ -150,7 +161,12 @@ export async function getConversationMessages(
 export async function deleteConversation(conversationId: string): Promise<void> {
   const response = await fetch(
     `${BLOCKCHAIN_BACKEND_URL}/api/conversations/${conversationId}`,
-    { method: 'DELETE' }
+    {
+      method: 'DELETE',
+      headers: {
+        'x-api-key': BLOCKCHAIN_API_KEY,
+      }
+    }
   )
   
   if (!response.ok) {
@@ -246,5 +262,5 @@ export function getBackendUrls() {
   }
 }
 
-// Export backend URLs as constants
-export { AI_AGENT_BACKEND_URL, BLOCKCHAIN_BACKEND_URL }
+// Export backend URLs and API key as constants
+export { AI_AGENT_BACKEND_URL, BLOCKCHAIN_BACKEND_URL, BLOCKCHAIN_API_KEY }

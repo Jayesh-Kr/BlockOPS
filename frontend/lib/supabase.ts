@@ -33,6 +33,7 @@ export interface Agent {
     tool: string
     next_tool: string | null
   }>
+  on_chain_id?: string | null
   created_at: string
   updated_at: string
 }

@@ -13,12 +13,18 @@ const {
   getAgent,
   updateAgent,
   regenerateApiKey,
+  registerAgentOnChain,
+  getAgentManifest,
   deleteAgent
 } = require('../controllers/agentController');
+const apiKeyAuth = require('../middleware/apiKeyAuth');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Agent CRUD
 // ─────────────────────────────────────────────────────────────────────────────
+
+// All agent management routes should be protected by the master API key
+router.use(apiKeyAuth());
 
 /**
  * POST /agents
@@ -62,6 +68,21 @@ router.patch('/:id', updateAgent);
  * Response: { success, apiKey, apiKeyPrefix, warning }
  */
 router.post('/:id/regenerate-key', regenerateApiKey);
+
+/**
+ * POST /agents/:id/register-on-chain
+ * Manually register an agent in the ERC-8004 Identity Registry
+ * 
+ * Body: { userId, privateKey? }
+ * Response: { success, onChainId, transactionHash }
+ */
+router.post('/:id/register-on-chain', registerAgentOnChain);
+
+/**
+ * GET /agents/:id/manifest
+ * Get public agent manifest for ERC-8004
+ */
+router.get('/:id/manifest', getAgentManifest);
 
 /**
  * DELETE /agents/:id?userId=xxx

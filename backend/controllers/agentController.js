@@ -14,6 +14,8 @@
 
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
+const { ethers } = require('ethers');
+const { getProvider, getWallet } = require('../utils/blockchain');
 const supabase = require('../config/supabase');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,9 +54,11 @@ async function createAgent(req, res) {
     }
 
     // Generate API key
-    const apiKey = generateApiKey();
-    const apiKeyHash = await bcrypt.hash(apiKey, 12);
-    const apiKeyPrefix = apiKey.slice(0, 12) + '...';
+    const rawApiKey = generateApiKey();
+    // SHA-256 hash for authentication lookup (matches apiKeyAuth.js)
+    const apiKeyHash = crypto.createHash('sha256').update(rawApiKey).digest('hex');
+    const apiKeyPrefix = rawApiKey.slice(0, 12) + '...';
+    
     const workflowTools = Array.isArray(tools) ? tools : [];
     const normalizedEnabledTools = Array.isArray(enabledTools)
       ? enabledTools
@@ -70,7 +74,7 @@ async function createAgent(req, res) {
         system_prompt: systemPrompt || null,
         enabled_tools: normalizedEnabledTools.length > 0 ? normalizedEnabledTools : null,
         wallet_address: walletAddress || null,
-        api_key: apiKey,
+        api_key: rawApiKey,
         tools: workflowTools,
         status,
         api_key_hash: apiKeyHash,
@@ -86,6 +90,22 @@ async function createAgent(req, res) {
       return res.status(500).json({ success: false, error: error.message });
     }
 
+    // Also register the key in agent_api_keys for unified auth (apiKeyAuth.js uses this table)
+    try {
+      await supabase
+        .from('agent_api_keys')
+        .insert({
+          agent_id: data.id,
+          user_id: userId,
+          key_hash: apiKeyHash,
+          label: `Key for ${name}`,
+          is_active: true
+        });
+    } catch (keyErr) {
+      console.error('[Agent] Failed to register API key in agent_api_keys:', keyErr);
+      // We don't fail the whole request because the agent was created in 'agents' table
+    }
+
     return res.json({
       success: true,
       agent: {
@@ -99,7 +119,7 @@ async function createAgent(req, res) {
         systemPrompt: data.system_prompt,
         enabledTools: data.enabled_tools,
         walletAddress: data.wallet_address,
-        apiKey,  // ⚠️ ONLY shown once
+        apiKey: rawApiKey,  // ⚠️ ONLY shown once
         apiKeyPrefix: data.api_key_prefix,
         createdAt: data.created_at,
         created_at: data.created_at,
@@ -131,7 +151,7 @@ async function listAgents(req, res) {
 
     const { data, error } = await supabase
       .from('agents')
-      .select('id, user_id, name, description, api_key, tools, status, system_prompt, enabled_tools, wallet_address, api_key_prefix, is_public, created_at, updated_at')
+      .select('id, user_id, name, description, api_key, tools, status, system_prompt, enabled_tools, wallet_address, on_chain_id, api_key_prefix, is_public, created_at, updated_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
@@ -170,6 +190,7 @@ async function listAgents(req, res) {
       system_prompt: agent.system_prompt,
       enabled_tools: agent.enabled_tools,
       wallet_address: agent.wallet_address,
+      on_chain_id: agent.on_chain_id,
       api_key_prefix: agent.api_key_prefix,
       is_public: agent.is_public,
       created_at: agent.created_at,
@@ -352,7 +373,8 @@ async function regenerateApiKey(req, res) {
 
     // Generate new API key
     const newApiKey = generateApiKey();
-    const newApiKeyHash = await bcrypt.hash(newApiKey, 12);
+    // SHA-256 hash for authentication lookup (matches apiKeyAuth.js)
+    const newApiKeyHash = crypto.createHash('sha256').update(newApiKey).digest('hex');
     const newApiKeyPrefix = newApiKey.slice(0, 12) + '...';
 
     // Update database
@@ -371,6 +393,28 @@ async function regenerateApiKey(req, res) {
       return res.status(500).json({ success: false, error: error.message });
     }
 
+    // Update agent_api_keys table (revoke old keys, add new one)
+    try {
+      // 1. Deactivate all existing keys for this agent
+      await supabase
+        .from('agent_api_keys')
+        .update({ is_active: false })
+        .eq('agent_id', id);
+
+      // 2. Insert the new key
+      await supabase
+        .from('agent_api_keys')
+        .insert({
+          agent_id: id,
+          user_id: agent.user_id,
+          key_hash: newApiKeyHash,
+          label: `Regenerated Key at ${new Date().toISOString()}`,
+          is_active: true
+        });
+    } catch (keyErr) {
+      console.error('[Agent] Failed to update agent_api_keys during regeneration:', keyErr);
+    }
+
     // Also update any linked Telegram users (so old hash is invalidated)
     await supabase
       .from('telegram_users')
@@ -386,6 +430,101 @@ async function regenerateApiKey(req, res) {
 
   } catch (err) {
     console.error('[Agent] Regenerate key error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /agents/:id/register-on-chain — Register agent in ERC-8004 Registry
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function registerAgentOnChain(req, res) {
+  try {
+    const { id } = req.params;
+    const { userId, privateKey } = req.body;
+
+    // Verify ownership
+    const { data: agent, error: agentError } = await supabase
+      .from('agents')
+      .select('user_id, on_chain_id, name')
+      .eq('id', id)
+      .single();
+
+    if (agentError || !agent) {
+      return res.status(404).json({ success: false, error: 'Agent not found' });
+    }
+
+    if (userId && agent.user_id !== userId) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+
+    if (agent.on_chain_id) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Agent already registered on-chain', 
+        onChainId: agent.on_chain_id 
+      });
+    }
+
+    // Initialize blockchain provider and wallet
+    const provider = getProvider();
+    const wallet = privateKey 
+      ? new ethers.Wallet(privateKey, provider)
+      : getWallet(); // Use master wallet if none provided
+
+    const identityAddr = process.env.IDENTITY_REGISTRY_ADDRESS;
+    if (!identityAddr) {
+      return res.status(500).json({ success: false, error: 'Identity Registry address not configured' });
+    }
+
+    const IDENTITY_ABI = [
+      "function registerAgent(address owner, string memory agentURI) public returns (uint256)",
+      "event AgentRegistered(uint256 indexed agentId, address indexed owner, string agentURI)"
+    ];
+
+    console.log(`[Agent] Registering ${agent.name} (${id}) on-chain...`);
+    const identityContract = new ethers.Contract(identityAddr, IDENTITY_ABI, wallet);
+    
+    const agentURI = `https://blockops.in/api/v1/agents/${id}/manifest`;
+    const tx = await identityContract.registerAgent(wallet.address, agentURI);
+    const receipt = await tx.wait();
+    
+    // Extract agentId from event
+    // Find the AgentRegistered event in logs
+    const iface = new ethers.Interface(IDENTITY_ABI);
+    let onChainId = null;
+    
+    for (const log of receipt.logs) {
+      try {
+        const parsedLog = iface.parseLog(log);
+        if (parsedLog && parsedLog.name === 'AgentRegistered') {
+          onChainId = parsedLog.args.agentId.toString();
+          break;
+        }
+      } catch (e) {
+        // Not our event
+      }
+    }
+
+    if (!onChainId) {
+      throw new Error('Failed to extract on-chain agent ID from transaction receipt');
+    }
+
+    // Save to Supabase
+    await supabase
+      .from('agents')
+      .update({ on_chain_id: onChainId })
+      .eq('id', id);
+
+    return res.json({
+      success: true,
+      onChainId,
+      transactionHash: receipt.hash,
+      message: `Agent registered on-chain with ID ${onChainId}`
+    });
+
+  } catch (err) {
+    console.error('[Agent] On-chain registration error:', err);
     return res.status(500).json({ success: false, error: err.message });
   }
 }
@@ -483,6 +622,59 @@ async function verifyApiKey(agentId, apiKey) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /agents/:id/manifest — Get agent manifest (ERC-8004)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function getAgentManifest(req, res) {
+  try {
+    const { id } = req.params;
+
+    const { data: agent, error } = await supabase
+      .from('agents')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error || !agent) {
+      return res.status(404).json({ success: false, error: 'Agent not found' });
+    }
+
+    // Standard ERC-8004 Agent Manifest
+    const manifest = {
+      name: agent.name,
+      version: "1.0.0",
+      description: agent.description,
+      author: "BlockOps",
+      erc8004: {
+        identityRegistry: `eip155:421614:${process.env.IDENTITY_REGISTRY_ADDRESS || '0x734C984AE7d64aa917D9D2e4B9C08A0CD6C0589B'}`,
+        reputationRegistry: `eip155:421614:${process.env.REPUTATION_REGISTRY_ADDRESS || '0xa497e1BFe08109D60A8F91AdEc868ffdD1e0055c'}`,
+        validationRegistry: `eip155:421614:${process.env.VALIDATION_REGISTRY_ADDRESS || '0xFab8731b8d1a978e78086179dC5494F0dbA1f6bE'}`,
+        agentId: agent.on_chain_id || "unregistered",
+        operatorWallet: agent.wallet_address || "0x0000000000000000000000000000000000000000"
+      },
+      capabilities: agent.enabled_tools || [],
+      trustModel: ["reputation", "crypto-economic"],
+      paymentProtocol: "x402",
+      chain: {
+        name: "Arbitrum Sepolia",
+        chainId: 421614
+      },
+      metadata: {
+        avatarUrl: agent.avatar_url,
+        createdAt: agent.created_at,
+        updatedAt: agent.updated_at
+      }
+    };
+
+    return res.json(manifest);
+
+  } catch (err) {
+    console.error('[Agent] Manifest error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+
 module.exports = {
   createAgent,
   listAgents,
@@ -491,5 +683,7 @@ module.exports = {
   regenerateApiKey,
   deleteAgent,
   getAgentById,
-  verifyApiKey
+  verifyApiKey,
+  registerAgentOnChain,
+  getAgentManifest
 };

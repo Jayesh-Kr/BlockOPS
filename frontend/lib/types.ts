@@ -37,6 +37,24 @@ export interface AgentChatResponse {
   agent_response: string
   tool_calls: ToolCall[]
   results: ToolResult[]
+  runtime?: {
+    onChainId: string | null
+    decision: {
+      action: string
+      status: string
+    }
+    verification: {
+      allSucceeded: boolean
+      verifications: Array<{
+        tool: string
+        txHash: string
+        validationHash: string | null
+        success: boolean
+        blockNumber?: number
+      }>
+    }
+    agent_log?: any
+  }
 }
 
 export interface BackendHealthResponse {

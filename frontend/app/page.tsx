@@ -3,6 +3,7 @@
 import Link from "next/link"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/lib/auth"
 import { ArrowRight, Bot, Loader2 } from "lucide-react"
 import { UserProfile } from "@/components/user-profile"
@@ -160,6 +161,15 @@ export default function Home() {
                 className="text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
               >
                 API Docs
+              </Link>
+              <Link 
+                href="/marketplace" 
+                prefetch 
+                onClick={() => setLoadingLink('/marketplace')}
+                className="text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors flex items-center gap-1.5"
+              >
+                Marketplace
+                <Badge variant="outline" className="h-4 px-1 text-[9px] bg-primary/5 text-primary border-primary/20">New</Badge>
               </Link>
               <Link 
                 href="/contract-explorer" 
@@ -638,7 +648,6 @@ export default function Home() {
               <ul className="space-y-2 sm:space-y-3">
                 <li><Link href="/agent-builder" className="text-slate-400 hover:text-white transition-colors text-sm">Agent Builder</Link></li>
                 <li><Link href="/my-agents" className="text-slate-400 hover:text-white transition-colors text-sm">My Agents</Link></li>
-                <li><Link href="/orbit-builder" className="text-slate-400 hover:text-white transition-colors text-sm">Orbit L3 Builder</Link></li>
                 <li><Link href="/contract-explorer" className="text-slate-400 hover:text-white transition-colors text-sm">Contract Explorer</Link></li>
                 <li><Link href="/api-docs" className="text-slate-400 hover:text-white transition-colors text-sm">API Docs</Link></li>
               </ul>

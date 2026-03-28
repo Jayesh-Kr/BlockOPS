@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useState, useRef, useEffect } from "react"
 import { useRouter, useParams } from "next/navigation"
-import { Send, Loader2, ChevronDown, ChevronUp, Wrench, ArrowLeft, ArrowRight, CircleDot, Copy, Check } from "lucide-react"
+import { Send, Loader2, ChevronDown, ChevronUp, Wrench, ArrowLeft, ArrowRight, CircleDot, Copy, Check, Star, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -16,7 +16,7 @@ import { toast } from "@/components/ui/use-toast"
 import { UserProfile } from "@/components/user-profile"
 import { useAuth } from "@/lib/auth"
 import { getAgentById } from "@/lib/agents"
-import { sendChatWithMemory } from "@/lib/backend"
+import { sendChatWithMemory, BLOCKCHAIN_BACKEND_URL } from "@/lib/backend"
 import type { Agent } from "@/lib/supabase"
 import type { AgentChatResponse } from "@/lib/types"
 import { ethers } from "ethers"
@@ -41,6 +41,24 @@ interface ToolResults {
   tool_calls: ToolCallInfo[]
   results: ToolResultInfo[]
   routing_plan?: any
+  runtime?: {
+    onChainId: string | null
+    decision: {
+      action: string
+      status: string
+    }
+    verification: {
+      allSucceeded: boolean
+      verifications: Array<{
+        tool: string
+        txHash: string
+        validationHash: string | null
+        success: boolean
+        blockNumber?: number
+      }>
+    }
+    agent_log?: any
+  }
 }
 
 interface Message {
@@ -57,15 +75,43 @@ function ToolDetailsView({ toolResults }: { toolResults: ToolResults }) {
 
   if (!toolResults?.tool_calls?.length) return null
 
+  const runtime = toolResults.runtime
+
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen} className="mt-3">
-      <CollapsibleTrigger asChild>
-        <button className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
-          <Wrench className="h-3 w-3" />
-          <span>{toolResults.tool_calls.length} tool call{toolResults.tool_calls.length > 1 ? "s" : ""}</span>
-          {isOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-        </button>
-      </CollapsibleTrigger>
+      <div className="flex flex-wrap items-center gap-2 mb-2">
+        <CollapsibleTrigger asChild>
+          <button className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+            <Wrench className="h-3 w-3" />
+            <span>{toolResults.tool_calls.length} tool call{toolResults.tool_calls.length > 1 ? "s" : ""}</span>
+            {isOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </button>
+        </CollapsibleTrigger>
+
+        {runtime?.onChainId && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge variant="outline" className="text-[9px] h-4 bg-primary/10 text-primary border-primary/20 cursor-help flex items-center gap-1">
+                  <CircleDot className="h-2 w-2" />
+                  ERC-8004 ID: {runtime.onChainId}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                <p className="text-[10px]">Registered on-chain agent identity</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+
+        {runtime?.verification?.allSucceeded && (
+          <Badge variant="outline" className="text-[9px] h-4 bg-green-500/10 text-green-600 border-green-500/20 flex items-center gap-1">
+            <Check className="h-2 w-2" />
+            On-Chain Verified
+          </Badge>
+        )}
+      </div>
+
       <CollapsibleContent className="mt-2 space-y-2">
         {toolResults.tool_calls.map((toolCall, index) => {
           const result = toolResults.results[index]
@@ -148,6 +194,7 @@ export default function AgentChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [reputationScore, setReputationScore] = useState<number | null>(null)
   const [conversationId, setConversationId] = useState<string | undefined>(undefined)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -162,13 +209,16 @@ export default function AgentChatPage() {
       const wallet = wallets[0]
       await wallet.switchChain(421614) // Arbitrum Sepolia
 
-      const provider = await wallet.getEthersProvider()
-      const signer = provider.getSigner()
+      const ethereumProvider = await wallet.getEthereumProvider()
+      const provider = new ethers.BrowserProvider(ethereumProvider)
+       const signer = await provider.getSigner()
 
       const tx = await signer.sendTransaction(txData.transaction)
       const receipt = await tx.wait()
+        
+        if (!receipt) throw new Error("Transaction failed to confirm")
 
-      return receipt.hash
+        return receipt.hash
     } catch (error: any) {
       console.error("MetaMask transaction error:", error)
       throw new Error(`Transaction failed: ${error.message}`)
@@ -176,7 +226,30 @@ export default function AgentChatPage() {
   }
 
   useEffect(() => {
-    const loadAgent = async () => {
+    if (agent?.on_chain_id) {
+      fetchReputation(agent.on_chain_id);
+    }
+  }, [agent]);
+
+  const fetchReputation = async (onChainId: string) => {
+    try {
+      const provider = new ethers.JsonRpcProvider("https://sepolia-rollup.arbitrum.io/rpc");
+      const reputationAddr = process.env.NEXT_PUBLIC_REPUTATION_REGISTRY_ADDRESS || "0xa497e1BFe08109D60A8F91AdEc868ffdD1e0055c";
+      
+      const REPUTATION_ABI = [
+        "function getAverageScore(uint256 agentId, string memory tag) public view returns (uint256)"
+      ];
+
+      const reputationContract = new ethers.Contract(reputationAddr, REPUTATION_ABI, provider);
+      const score = await reputationContract.getAverageScore(onChainId, "successRate");
+      setReputationScore(Number(score));
+    } catch (e) {
+      console.error("Error fetching reputation:", e);
+    }
+  };
+
+  useEffect(() => {
+    const fetchAgent = async () => {
       if (!agentId) { router.push("/my-agents"); return }
       try {
         const agentData = await getAgentById(agentId)
@@ -194,7 +267,7 @@ export default function AgentChatPage() {
         setLoadingAgent(false)
       }
     }
-    loadAgent()
+    fetchAgent()
   }, [agentId, router])
 
   useEffect(() => {
@@ -348,7 +421,50 @@ export default function AgentChatPage() {
                 <TooltipContent side="bottom"><p>Back</p></TooltipContent>
               </Tooltip>
               <Separator orientation="vertical" className="h-4" />
-              <span className="text-sm font-medium text-foreground">{agent.name}</span>
+              <div className="flex flex-col">
+                <h1 className="text-sm font-semibold text-foreground truncate max-w-[120px] sm:max-w-[200px]">
+                  {agent?.name || "Agent Chat"}
+                </h1>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                    <span className={cn("h-1.5 w-1.5 rounded-full", agent ? "bg-green-500" : "bg-muted-foreground/30")} />
+                    {agent ? "Online" : "Loading..."}
+                  </span>
+                  {reputationScore !== null && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Badge variant="outline" className="h-3.5 px-1 text-[9px] bg-yellow-500/10 text-yellow-600 border-yellow-500/20 flex items-center gap-0.5 cursor-help">
+                          <Star className="h-2 w-2 fill-current" />
+                          {reputationScore}
+                        </Badge>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="text-[10px] p-2 max-w-[200px]">
+                        <p className="font-semibold mb-1">Decentralized Reputation</p>
+                        <p className="text-muted-foreground">This score is calculated from on-chain feedback and verified execution proofs (ERC-8004).</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                  {agent?.on_chain_id && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Badge 
+                          variant="outline" 
+                          className="h-3.5 px-1 text-[9px] bg-primary/10 text-primary border-primary/20 flex items-center gap-0.5 cursor-help"
+                          onClick={() => window.open(`${BLOCKCHAIN_BACKEND_URL}/agents/${agent.id}/manifest`, '_blank')}
+                        >
+                          <ShieldCheck className="h-2 w-2" />
+                          ERC-8004
+                        </Badge>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="text-[10px] p-2 max-w-[200px]">
+                        <p className="font-semibold mb-1">On-Chain Identity Verified</p>
+                        <p className="text-muted-foreground mb-2">This agent is registered in the BlockOps Identity Registry with ID #{agent.on_chain_id}.</p>
+                        <p className="text-primary hover:underline cursor-pointer">Click to view manifest</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
+              </div>
               <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-normal">
                 {agent.tools?.length || 0} {(agent.tools?.length || 0) === 1 ? "tool" : "tools"}
               </Badge>

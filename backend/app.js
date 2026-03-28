@@ -10,7 +10,6 @@ const transferRoutes = require('./routes/transferRoutes');
 const healthRoutes = require('./routes/healthRoutes');
 const priceRoutes = require('./routes/priceRoutes');
 const nlExecutorRoutes = require('./routes/nlExecutorRoutes');
-const orbitRoutes = require('./routes/orbitRoutes');
 const conversationRoutes = require('./routes/conversationRoutes');
 const walletRoutes = require('./routes/walletRoutes');
 const allowanceRoutes = require('./routes/allowanceRoutes');
@@ -74,10 +73,6 @@ app.use('/ens',       priceLimiter, ensRoutes);
 
 // Portfolio: read-only but auth-optional (key attaches agent context)
 app.use('/portfolio', chatLimiter, apiKeyAuth({ optional: true }), portfolioRoutes);
-
-// Orbit builder: rate limited; no key required (config only, no signing)
-// MUST be registered before the generic /api mount to avoid chatLimiter being applied
-app.use('/api/orbit', orbitRoutes);
 
 // Conversation chat: rate limited; api key optional (attaches context if present)
 app.use('/api', chatLimiter, apiKeyAuth({ optional: true }), conversationRoutes);
@@ -180,12 +175,6 @@ const server = app.listen(PORT, async () => {
   console.log('    POST /email/send                   - Send email (text/HTML/attachments)');
   console.log('    POST /email/send-html              - Send HTML email');
   console.log('    GET  /email/verify                 - Verify email connection');
-  console.log('\n  Arbitrum Orbit L3:');
-  console.log('    POST /api/orbit/config          - Create L3 config');
-  console.log('    GET  /api/orbit/config/:id      - Get config');
-  console.log('    GET  /api/orbit/configs         - List all configs');
-  console.log('    POST /api/orbit/deploy          - Deploy L3 chain');
-  console.log('    GET  /api/orbit/deploy/status/:id - Check deployment');
   console.log('\n' + '='.repeat(50) + '\n');
 });
 

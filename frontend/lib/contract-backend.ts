@@ -5,7 +5,7 @@
  * Natural Language Executor endpoints for smart contract interaction.
  */
 
-import { BLOCKCHAIN_BACKEND_URL } from './backend'
+import { BLOCKCHAIN_BACKEND_URL, BLOCKCHAIN_API_KEY } from './backend'
 
 /**
  * Contract Function Interface
@@ -95,6 +95,7 @@ export async function discoverContract(
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        'x-api-key': BLOCKCHAIN_API_KEY,
       },
     }
   )
@@ -128,6 +129,7 @@ export async function executeNaturalLanguageCommand(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'x-api-key': BLOCKCHAIN_API_KEY,
       },
       body: JSON.stringify({
         contractAddress,
@@ -168,6 +170,7 @@ export async function quickExecuteCommand(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'x-api-key': BLOCKCHAIN_API_KEY,
       },
       body: JSON.stringify({
         contractAddress,

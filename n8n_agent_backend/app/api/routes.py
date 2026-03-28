@@ -78,7 +78,6 @@ AVAILABLE TOOLS:
 - get_balance: Get the ETH balance of a wallet address
 - deploy_erc20: Deploy a new ERC-20 token contract
 - deploy_erc721: Deploy a new ERC-721 NFT collection
-- deploy_orbit: Deploy an Arbitrum Orbit L3 chain
 - mint_nft: Mint an NFT from a deployed ERC-721 collection
 - get_price: Get the current price of a token
 - airdrop: Send tokens to multiple addresses

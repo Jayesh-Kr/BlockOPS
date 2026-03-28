@@ -4,6 +4,7 @@ const { chatWithAI } = require('../services/aiService');
 const { intelligentToolRouting, convertToAgentFormat } = require('../services/toolRouter');
 const { executeToolsDirectly: executeToolsDirectlyService, formatToolResponse } = require('../services/directToolExecutor');
 const { fireEvent } = require('../services/webhookService');
+const { BlockOpsAgentRuntime } = require('../services/agentRuntime');
 
 const IN_MEMORY_MESSAGE_LIMIT = 30;
 const inMemoryConversations = new Map();
@@ -458,6 +459,9 @@ async function chat(req, res) {
       
       console.log('[Chat] Executing tools:', tools.map(t => `${t.tool}${t.next_tool ? ` → ${t.next_tool}` : ''}`).join(', '));
       
+      // Use the new BlockOps Agent Runtime (ERC-8004 PEVD Loop)
+      const runtime = new BlockOpsAgentRuntime(agentId, { privateKey });
+      
       try {
         // Build context summary from recent messages for the agent
         const recentMessages = messages.slice(-10);
@@ -488,24 +492,44 @@ async function chat(req, res) {
         // Enhance user message with conversation context and routing analysis
         const enhancedMessage = `${routingPlan.analysis}\n\nConversation history:\n${contextSummary}${dataContext}\n\nCurrent user query: ${truncatedMessage}\n\nExecution plan: ${routingPlan.execution_plan.type} with ${routingPlan.execution_plan.steps.length} steps: ${routingPlan.execution_plan.steps.map(s => s.tool).join(' → ')}`;
         
-        const agentResponse = await fetch('http://localhost:8000/agent/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tools: tools,
-            user_message: enhancedMessage,
-            private_key: privateKey || null,
-            wallet_address: walletAddress || null
-          })
-        });
+        // Execute through the runtime PEVD loop
+        const runtimeResult = await runtime.run(
+          truncatedMessage, 
+          routingPlan, 
+          async () => {
+            const agentResponse = await fetch('http://localhost:8000/agent/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                tools: tools,
+                user_message: enhancedMessage,
+                private_key: privateKey || null,
+                wallet_address: walletAddress || null
+              })
+            });
 
-        if (!agentResponse.ok) {
-          const errorText = await agentResponse.text();
-          throw new Error(`Agent backend error: ${agentResponse.status} - ${errorText}`);
-        }
+            if (!agentResponse.ok) {
+              const errorText = await agentResponse.text();
+              throw new Error(`Agent backend error: ${agentResponse.status} - ${errorText}`);
+            }
 
-        const agentData = await agentResponse.json();
-        aiResponse = agentData.agent_response;
+            const agentData = await agentResponse.json();
+            return agentData;
+          }
+        );
+
+        aiResponse = runtimeResult.agent_response;
+        toolResults = {
+          tool_calls: runtimeResult.tool_calls || [],
+          results: runtimeResult.results || [],
+          routing_plan: routingPlan,
+          runtime: {
+            onChainId: runtimeResult.onChainId,
+            decision: runtimeResult.decision,
+            verification: runtimeResult.verification,
+            agent_log: runtime.exportLogs() // Added standard agent_log.json
+          }
+        };
 
         // Treat sentinel rate-limit strings from the agent backend as real errors
         // so the direct-execution fallback can handle them properly
@@ -538,13 +562,7 @@ async function chat(req, res) {
           }
         });
         
-        toolResults = {
-          tool_calls: agentData.tool_calls || [],
-          results: agentData.results || [],
-          routing_plan: routingPlan // Include routing plan for debugging
-        };
-        
-        console.log('[Chat] Agent backend response received with', agentData.tool_calls?.length || 0, 'tool calls');
+        console.log('[Chat] Agent backend response received via runtime PEVD loop');
       } catch (agentError) {
         console.error('[Chat] Agent backend failed:', agentError.message);
 
@@ -553,27 +571,46 @@ async function chat(req, res) {
         console.log('[Chat] Attempting direct tool execution fallback after agent backend failure...');
 
         try {
-          const directExecResult = await executeToolsDirectlyService(
-            routingPlan,
+          const runtimeResult = await runtime.run(
             truncatedMessage,
-            {
-              walletAddress: walletAddress || null,
-              privateKey: privateKey || null,
-              defaultEmailTo: defaultEmailTo || userEmail || null,
-              userEmail: userEmail || null,
-              apiKey: req.headers['x-api-key'] || process.env.MASTER_API_KEY || null
+            routingPlan,
+            async () => {
+              const directExecResult = await executeToolsDirectlyService(
+                routingPlan,
+                truncatedMessage,
+                {
+                  walletAddress: walletAddress || null,
+                  privateKey: privateKey || null,
+                  defaultEmailTo: defaultEmailTo || userEmail || null,
+                  userEmail: userEmail || null,
+                  apiKey: req.headers['x-api-key'] || process.env.MASTER_API_KEY || null
+                }
+              );
+              
+              // Map directExecResult to runtime format
+              return {
+                agent_response: formatToolResponse(directExecResult),
+                tool_calls: directExecResult.tool_calls,
+                results: directExecResult.results
+              };
             }
           );
 
-          if (directExecResult && directExecResult.results && directExecResult.results.length > 0) {
-            const successCount = directExecResult.results.filter(r => r.success).length;
-            console.log('[Chat] Direct tool execution completed:', `${successCount}/${directExecResult.results.length} successful`);
-            aiResponse = formatToolResponse(directExecResult);
+          if (runtimeResult && runtimeResult.results && runtimeResult.results.length > 0) {
+            const successCount = runtimeResult.results.filter(r => r.success).length;
+            console.log('[Chat] Direct tool execution fallback completed:', `${successCount}/${runtimeResult.results.length} successful`);
+            aiResponse = runtimeResult.agent_response;
             toolResults = {
-              tool_calls: directExecResult.tool_calls,
-              results: directExecResult.results,
+              tool_calls: runtimeResult.tool_calls,
+              results: runtimeResult.results,
               routing_plan: routingPlan,
-              execution_mode: 'direct_fallback'
+              execution_mode: 'direct_fallback',
+              runtime: {
+                onChainId: runtimeResult.onChainId,
+                decision: runtimeResult.decision,
+                verification: runtimeResult.verification,
+                agent_log: runtime.exportLogs() // Added standard agent_log.json
+              }
             };
           } else {
             aiResponse = `I could not execute the requested blockchain actions because the execution backend is unavailable right now. No transfer or email was sent. Please retry in a moment.`;
