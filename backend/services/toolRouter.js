@@ -375,6 +375,24 @@ Respond ONLY with valid JSON, no other text.`;
 
     const jsonStr = jsonMatch[1] || jsonMatch[0];
     const routingPlan = JSON.parse(jsonStr.trim());
+    const fallbackSteps = detectToolsWithRegex(userMessage);
+
+    // Guardrail: if AI fails to return actionable steps for an actionable request,
+    // fall back to regex-based routing instead of silently downgrading to chat.
+    const hasAIFoundSteps = Array.isArray(routingPlan.execution_plan?.steps) && routingPlan.execution_plan.steps.length > 0;
+    if (!routingPlan.is_off_topic && fallbackSteps.length > 0 && (!routingPlan.requires_tools || !hasAIFoundSteps)) {
+      const isSequentialFallback = fallbackSteps.some(step => Array.isArray(step.depends_on) && step.depends_on.length > 0);
+      routingPlan.requires_tools = true;
+      routingPlan.execution_plan = {
+        type: isSequentialFallback ? 'sequential' : 'parallel',
+        steps: fallbackSteps
+      };
+      routingPlan.missing_info = routingPlan.missing_info || [];
+      routingPlan.analysis = routingPlan.analysis
+        ? `${routingPlan.analysis} [auto-corrected with fallback routing]`
+        : 'Auto-corrected with fallback routing';
+      console.log('[Tool Router] AI returned non-actionable plan; applied regex fallback routing');
+    }
 
     // POST-PROCESS: Enforce get_balance when a calculate step references balance variables
     // This prevents the AI from skipping get_balance and leaving eth_balance unresolved.
@@ -404,10 +422,10 @@ Respond ONLY with valid JSON, no other text.`;
 
     // POST-PROCESS: enforce sequential ordering for transfer -> tx_status -> send_email chains.
     const hasTransfer = steps.some(s => s.tool === 'transfer');
-    const hasTxStatus = steps.some(s => s.tool === 'tx_status');
+    const hasTxStatus = steps.some(s => s.tool === 'tx_status' || s.tool === 'lookup_transaction');
     const hasSendEmail = steps.some(s => s.tool === 'send_email');
     if (hasTransfer && (hasTxStatus || hasSendEmail)) {
-      const order = ['transfer', 'tx_status', 'send_email'];
+      const order = ['transfer', 'tx_status', 'lookup_transaction', 'send_email'];
       const ordered = [
         ...order.flatMap(name => steps.filter(s => s.tool === name)),
         ...steps.filter(s => !order.includes(s.tool))
@@ -425,12 +443,13 @@ Respond ONLY with valid JSON, no other text.`;
     console.error('[Tool Router] Error:', error.message);
     const fallbackSteps = detectToolsWithRegex(userMessage);
     const isSequential = fallbackSteps.some(step => Array.isArray(step.depends_on) && step.depends_on.length > 0);
+    const hasFallbackSteps = fallbackSteps.length > 0;
     
     // Fallback to simple routing
     return {
       analysis: 'Fallback routing due to AI error',
       is_off_topic: false,
-      requires_tools: true,
+      requires_tools: hasFallbackSteps,
       execution_plan: {
         type: isSequential ? 'sequential' : 'parallel',
         steps: fallbackSteps

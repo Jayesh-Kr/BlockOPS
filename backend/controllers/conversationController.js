@@ -251,14 +251,21 @@ async function chat(req, res) {
       wallet_history: 'wallet_history'
     };
     const normalizeToolName = (toolName) => TOOL_ALIASES[toolName] || toolName;
+    let blockedByToolPermissions = false;
+    let requestedTools = [];
     
     // Filter routing plan steps to only allowed tools (if agent has restrictions)
     if (enabledTools && Array.isArray(enabledTools) && enabledTools.length > 0) {
       const normalizedAllowedTools = enabledTools.map(normalizeToolName);
       if (routingPlan.execution_plan?.steps) {
+        const originalSteps = [...routingPlan.execution_plan.steps];
         routingPlan.execution_plan.steps = routingPlan.execution_plan.steps.filter(
           step => normalizedAllowedTools.includes(step.tool)
         );
+        requestedTools = [...new Set(originalSteps.map(step => step.tool))];
+        if (originalSteps.length > 0 && routingPlan.execution_plan.steps.length === 0) {
+          blockedByToolPermissions = true;
+        }
         if (routingPlan.execution_plan.steps.length === 0) {
           routingPlan.requires_tools = false;
         }
@@ -271,8 +278,34 @@ async function chat(req, res) {
       requiresTools: routingPlan.requires_tools,
       complexity: routingPlan.complexity,
       executionType: routingPlan.execution_plan?.type,
-      toolCount: routingPlan.execution_plan?.steps?.length || 0
+      toolCount: routingPlan.execution_plan?.steps?.length || 0,
+      blockedByToolPermissions
     });
+
+    if (blockedByToolPermissions) {
+      const permissionMessage = `I identified a blockchain action request, but this agent is not allowed to run the required tools: ${requestedTools.join(', ')}. No transaction was sent and no email was sent. Please enable those tools for this agent and retry.`;
+
+      if (useSupabase) {
+        await supabase
+          .from('conversation_messages')
+          .insert({
+            conversation_id: convId,
+            role: 'assistant',
+            content: permissionMessage
+          });
+      } else {
+        addInMemoryMessage(convId, 'assistant', permissionMessage);
+      }
+
+      return res.json({
+        conversationId: convId,
+        message: permissionMessage,
+        isNewConversation,
+        messageCount: useSupabase ? messages.length + 1 : getInMemoryMessages(convId).length,
+        hasTools: false,
+        toolPermissionBlocked: true
+      });
+    }
     
     // Guard rail: Reject off-topic questions
     if (routingPlan.is_off_topic) {
@@ -514,57 +547,40 @@ async function chat(req, res) {
         console.log('[Chat] Agent backend response received with', agentData.tool_calls?.length || 0, 'tool calls');
       } catch (agentError) {
         console.error('[Chat] Agent backend failed:', agentError.message);
-        
-        // Check if it's an AI provider issue - if so, try direct tool execution
-        if (agentError.message?.includes('rate limited') || agentError.message?.includes('503') || agentError.message?.includes('AI provider')) {
-          console.log('[Chat] AI provider issue detected, attempting direct tool execution...');
-          
-          try {
-            const directExecResult = await executeToolsDirectlyService(
-              routingPlan,
-              truncatedMessage,
-              {
-                walletAddress: walletAddress || null,
-                privateKey: privateKey || null,
-                defaultEmailTo: defaultEmailTo || userEmail || null,
-                userEmail: userEmail || null,
-                apiKey: req.headers['x-api-key'] || process.env.MASTER_API_KEY || null
-              }
-            );
-            
-            if (directExecResult && directExecResult.results && directExecResult.results.length > 0) {
-              // Successfully executed tools directly!
-              const successCount = directExecResult.results.filter(r => r.success).length;
-              console.log('[Chat] Direct tool execution completed:', `${successCount}/${directExecResult.results.length} successful`);
-              aiResponse = formatToolResponse(directExecResult);
-              toolResults = {
-                tool_calls: directExecResult.tool_calls,
-                results: directExecResult.results,
-                routing_plan: routingPlan,
-                execution_mode: 'direct_fallback'
-              };
-            } else {
-              // Direct execution failed or produced no results
-              aiResponse = `I'm experiencing temporary issues with my AI providers. However, I identified what you need:\n\n**${routingPlan.analysis}**\n\nRequired tools:\n${routingPlan.execution_plan?.steps?.map((step, i) => `${i + 1}. ${step.tool} - ${step.reason}`).join('\n')}\n\nUnfortunately, I cannot execute these tools at the moment. Please try again in a few moments.`;
+
+        // For tool-required requests, always try direct execution fallback.
+        // Never degrade to plain chat, which can hallucinate execution status.
+        console.log('[Chat] Attempting direct tool execution fallback after agent backend failure...');
+
+        try {
+          const directExecResult = await executeToolsDirectlyService(
+            routingPlan,
+            truncatedMessage,
+            {
+              walletAddress: walletAddress || null,
+              privateKey: privateKey || null,
+              defaultEmailTo: defaultEmailTo || userEmail || null,
+              userEmail: userEmail || null,
+              apiKey: req.headers['x-api-key'] || process.env.MASTER_API_KEY || null
             }
-          } catch (directError) {
-            console.error('[Chat] Direct tool execution failed:', directError.message);
-            aiResponse = `I'm experiencing temporary issues with my AI providers and could not execute the requested tools. Please try again in a moment, or contact support if this persists.`;
+          );
+
+          if (directExecResult && directExecResult.results && directExecResult.results.length > 0) {
+            const successCount = directExecResult.results.filter(r => r.success).length;
+            console.log('[Chat] Direct tool execution completed:', `${successCount}/${directExecResult.results.length} successful`);
+            aiResponse = formatToolResponse(directExecResult);
+            toolResults = {
+              tool_calls: directExecResult.tool_calls,
+              results: directExecResult.results,
+              routing_plan: routingPlan,
+              execution_mode: 'direct_fallback'
+            };
+          } else {
+            aiResponse = `I could not execute the requested blockchain actions because the execution backend is unavailable right now. No transfer or email was sent. Please retry in a moment.`;
           }
-        } else {
-          // For other errors, try fallback to simple chat
-          console.log('[Chat] Falling back to simple chat');
-          const defaultSystemPrompt = systemPrompt || 
-            `You are a specialized blockchain operations assistant. You help with blockchain-related tasks: cryptocurrency prices, wallet operations, token/NFT deployment, smart contracts, blockchain transactions, and sending email notifications about these operations.
-            
-            You can also compose and send emails when users ask. Extract the recipient, subject, and body from the user's request and use the send_email tool.
-            
-            If asked about topics unrelated to blockchain or email notifications (politics, news, general knowledge, weather, entertainment, etc.), respond: "I'm a blockchain operations assistant and can only help with blockchain-related tasks and email notifications. Please ask me something about cryptocurrency, tokens, NFTs, blockchain operations, or sending an email."
-            
-            The user's request analysis: ${routingPlan.analysis}. Provide clear, accurate, and concise responses. Use **bold** formatting sparingly and only for important terms or key points that need emphasis.`;
-          
-          const { context } = buildContext(messages, defaultSystemPrompt);
-          aiResponse = await chatWithAI(context);
+        } catch (directError) {
+          console.error('[Chat] Direct tool execution failed:', directError.message);
+          aiResponse = `I could not execute the requested blockchain actions because the execution backend is unavailable right now. No transfer or email was sent. Please retry in a moment.`;
         }
       }
     } else {
