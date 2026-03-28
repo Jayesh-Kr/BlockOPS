@@ -36,9 +36,11 @@ async function createAgent(req, res) {
       name, 
       description, 
       systemPrompt, 
+      tools,
       enabledTools,     // array of tool names
       walletAddress,
       avatarUrl,
+      status = 'active',
       isPublic = false
     } = req.body;
 
@@ -53,6 +55,10 @@ async function createAgent(req, res) {
     const apiKey = generateApiKey();
     const apiKeyHash = await bcrypt.hash(apiKey, 12);
     const apiKeyPrefix = apiKey.slice(0, 12) + '...';
+    const workflowTools = Array.isArray(tools) ? tools : [];
+    const normalizedEnabledTools = Array.isArray(enabledTools)
+      ? enabledTools
+      : workflowTools.map((tool) => tool.tool).filter(Boolean);
 
     // Insert into database
     const { data, error } = await supabase
@@ -62,8 +68,11 @@ async function createAgent(req, res) {
         name,
         description: description || null,
         system_prompt: systemPrompt || null,
-        enabled_tools: enabledTools || null,
+        enabled_tools: normalizedEnabledTools.length > 0 ? normalizedEnabledTools : null,
         wallet_address: walletAddress || null,
+        api_key: apiKey,
+        tools: workflowTools,
+        status,
         api_key_hash: apiKeyHash,
         api_key_prefix: apiKeyPrefix,
         avatar_url: avatarUrl || null,
@@ -81,13 +90,20 @@ async function createAgent(req, res) {
       success: true,
       agent: {
         id: data.id,
+        userId: data.user_id,
         name: data.name,
         description: data.description,
-        apiKey,  // ⚠️ ONLY shown once
-        apiKeyPrefix: data.api_key_prefix,
+        api_key: data.api_key,
+        tools: data.tools || [],
+        status: data.status,
+        systemPrompt: data.system_prompt,
         enabledTools: data.enabled_tools,
         walletAddress: data.wallet_address,
-        createdAt: data.created_at
+        apiKey,  // ⚠️ ONLY shown once
+        apiKeyPrefix: data.api_key_prefix,
+        createdAt: data.created_at,
+        created_at: data.created_at,
+        updated_at: data.updated_at
       },
       warning: 'Save this API key now. You won\'t be able to see it again.'
     });
@@ -115,7 +131,7 @@ async function listAgents(req, res) {
 
     const { data, error } = await supabase
       .from('agents')
-      .select('id, name, description, api_key_prefix, enabled_tools, wallet_address, is_public, created_at, updated_at')
+      .select('id, user_id, name, description, api_key, tools, status, system_prompt, enabled_tools, wallet_address, api_key_prefix, is_public, created_at, updated_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
@@ -144,7 +160,20 @@ async function listAgents(req, res) {
 
     // Enrich agent list with Telegram status
     const agents = data.map(agent => ({
-      ...agent,
+      id: agent.id,
+      user_id: agent.user_id,
+      name: agent.name,
+      description: agent.description,
+      api_key: agent.api_key,
+      tools: agent.tools || [],
+      status: agent.status || 'active',
+      system_prompt: agent.system_prompt,
+      enabled_tools: agent.enabled_tools,
+      wallet_address: agent.wallet_address,
+      api_key_prefix: agent.api_key_prefix,
+      is_public: agent.is_public,
+      created_at: agent.created_at,
+      updated_at: agent.updated_at,
       linkedToTelegram: !!linkedMap[agent.id],
       telegramChatId: linkedMap[agent.id] || null
     }));
@@ -192,9 +221,12 @@ async function getAgent(req, res) {
       success: true,
       agent: {
         id: data.id,
-        userId: data.user_id,
+        user_id: data.user_id,
         name: data.name,
         description: data.description,
+        api_key: data.api_key,
+        tools: data.tools || [],
+        status: data.status || 'active',
         systemPrompt: data.system_prompt,
         enabledTools: data.enabled_tools,
         walletAddress: data.wallet_address,
@@ -222,7 +254,7 @@ async function getAgent(req, res) {
 async function updateAgent(req, res) {
   try {
     const { id } = req.params;
-    const { userId, name, description, systemPrompt, enabledTools, walletAddress, avatarUrl, isPublic } = req.body;
+    const { userId, name, description, systemPrompt, tools, enabledTools, walletAddress, avatarUrl, status, isPublic } = req.body;
 
     // Verify ownership
     const { data: agent } = await supabase
@@ -241,12 +273,20 @@ async function updateAgent(req, res) {
 
     // Build update object (only update provided fields)
     const updates = { updated_at: new Date().toISOString() };
+    const workflowTools = Array.isArray(tools) ? tools : undefined;
+    const normalizedEnabledTools = Array.isArray(enabledTools)
+      ? enabledTools
+      : workflowTools
+        ? workflowTools.map((tool) => tool.tool).filter(Boolean)
+        : undefined;
     if (name !== undefined) updates.name = name;
     if (description !== undefined) updates.description = description;
     if (systemPrompt !== undefined) updates.system_prompt = systemPrompt;
-    if (enabledTools !== undefined) updates.enabled_tools = enabledTools;
+    if (workflowTools !== undefined) updates.tools = workflowTools;
+    if (normalizedEnabledTools !== undefined) updates.enabled_tools = normalizedEnabledTools;
     if (walletAddress !== undefined) updates.wallet_address = walletAddress;
     if (avatarUrl !== undefined) updates.avatar_url = avatarUrl;
+    if (status !== undefined) updates.status = status;
     if (isPublic !== undefined) updates.is_public = isPublic;
 
     const { data, error } = await supabase
@@ -265,12 +305,18 @@ async function updateAgent(req, res) {
       success: true,
       agent: {
         id: data.id,
+        user_id: data.user_id,
         name: data.name,
         description: data.description,
+        api_key: data.api_key,
+        tools: data.tools || [],
+        status: data.status || 'active',
         systemPrompt: data.system_prompt,
         enabledTools: data.enabled_tools,
         walletAddress: data.wallet_address,
-        updatedAt: data.updated_at
+        updatedAt: data.updated_at,
+        created_at: data.created_at,
+        updated_at: data.updated_at
       }
     });
 
@@ -313,6 +359,7 @@ async function regenerateApiKey(req, res) {
     const { error } = await supabase
       .from('agents')
       .update({
+        api_key: newApiKey,
         api_key_hash: newApiKeyHash,
         api_key_prefix: newApiKeyPrefix,
         updated_at: new Date().toISOString()

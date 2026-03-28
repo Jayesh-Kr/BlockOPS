@@ -1,79 +1,80 @@
-import { supabase, type Agent } from './supabase'
+import { BLOCKCHAIN_BACKEND_URL } from './backend'
+import type { Agent } from './supabase'
+
+type ToolConfig = Array<{ tool: string; next_tool: string | null }>
+
+async function parseJson(response: Response) {
+  return response.json().catch(() => ({}))
+}
+
+function normalizeAgent(agent: any): Agent {
+  return {
+    id: agent.id,
+    user_id: agent.user_id ?? agent.userId,
+    name: agent.name,
+    description: agent.description ?? null,
+    api_key: agent.api_key ?? agent.apiKey ?? '',
+    tools: Array.isArray(agent.tools) ? agent.tools : [],
+    created_at: agent.created_at ?? agent.createdAt,
+    updated_at: agent.updated_at ?? agent.updatedAt,
+  }
+}
 
 export async function createAgent(
   userId: string,
   name: string,
   description: string | null,
-  tools: Array<{ tool: string; next_tool: string | null }>
+  tools: ToolConfig
 ): Promise<Agent> {
-  // Generate random API key
-  const apiKey = generateApiKey()
-
-  const { data, error } = await supabase
-    .from('agents')
-    .insert({
-      user_id: userId,
+  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      userId,
       name,
       description,
-      api_key: apiKey,
       tools,
-    })
-    .select()
-    .single()
+    }),
+  })
 
-  if (error) {
-    throw new Error(`Failed to create agent: ${error.message}`)
+  const payload = await parseJson(response)
+  if (!response.ok || !payload.success) {
+    throw new Error(`Failed to create agent: ${payload.error || `Request failed with status ${response.status}`}`)
   }
 
-  return data
+  return normalizeAgent(payload.agent)
 }
 
 export async function getAgentsByUserId(userId: string): Promise<Agent[]> {
-  const { data, error } = await supabase
-    .from('agents')
-    .select('*')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
+  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents?userId=${encodeURIComponent(userId)}`)
+  const payload = await parseJson(response)
 
-  if (error) {
-    throw new Error(`Failed to fetch agents: ${error.message}`)
+  if (!response.ok || !payload.success) {
+    throw new Error(`Failed to fetch agents: ${payload.error || `Request failed with status ${response.status}`}`)
   }
 
-  return data || []
+  return Array.isArray(payload.agents) ? payload.agents.map(normalizeAgent) : []
 }
 
 export async function getAgentById(agentId: string): Promise<Agent | null> {
-  const { data, error } = await supabase
-    .from('agents')
-    .select('*')
-    .eq('id', agentId)
-    .single()
+  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}`)
+  const payload = await parseJson(response)
 
-  if (error) {
-    if (error.code === 'PGRST116') {
-      return null // Not found
-    }
-    throw new Error(`Failed to fetch agent: ${error.message}`)
+  if (response.status === 404) {
+    return null
   }
 
-  return data
+  if (!response.ok || !payload.success) {
+    throw new Error(`Failed to fetch agent: ${payload.error || `Request failed with status ${response.status}`}`)
+  }
+
+  return normalizeAgent(payload.agent)
 }
 
 export async function getAgentByApiKey(apiKey: string): Promise<Agent | null> {
-  const { data, error } = await supabase
-    .from('agents')
-    .select('*')
-    .eq('api_key', apiKey)
-    .single()
-
-  if (error) {
-    if (error.code === 'PGRST116') {
-      return null // Not found
-    }
-    throw new Error(`Failed to fetch agent: ${error.message}`)
-  }
-
-  return data
+  throw new Error(`Failed to fetch agent: browser-side api_key lookup is not supported`)
 }
 
 export async function updateAgent(
@@ -81,38 +82,32 @@ export async function updateAgent(
   updates: {
     name?: string
     description?: string | null
-    tools?: Array<{ tool: string; next_tool: string | null }>
+    tools?: ToolConfig
   }
 ): Promise<Agent> {
-  const { data, error } = await supabase
-    .from('agents')
-    .update(updates)
-    .eq('id', agentId)
-    .select()
-    .single()
+  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(updates),
+  })
+  const payload = await parseJson(response)
 
-  if (error) {
-    throw new Error(`Failed to update agent: ${error.message}`)
+  if (!response.ok || !payload.success) {
+    throw new Error(`Failed to update agent: ${payload.error || `Request failed with status ${response.status}`}`)
   }
 
-  return data
+  return normalizeAgent(payload.agent)
 }
 
 export async function deleteAgent(agentId: string): Promise<void> {
-  const { error } = await supabase.from('agents').delete().eq('id', agentId)
+  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}`, {
+    method: 'DELETE',
+  })
+  const payload = await parseJson(response)
 
-  if (error) {
-    throw new Error(`Failed to delete agent: ${error.message}`)
+  if (!response.ok || !payload.success) {
+    throw new Error(`Failed to delete agent: ${payload.error || `Request failed with status ${response.status}`}`)
   }
 }
-
-function generateApiKey(): string {
-  // Generate a random 32-character API key
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-  let result = ''
-  for (let i = 0; i < 32; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length))
-  }
-  return result
-}
-
