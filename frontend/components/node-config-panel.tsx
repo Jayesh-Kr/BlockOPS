@@ -1,14 +1,16 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { X, Send, CheckCircle2, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { toast } from "@/components/ui/use-toast"
 import type { WorkflowNode } from "@/lib/types"
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3000"
+const DEFAULT_EMAIL_RECIPIENT_KEY = "blockops.defaultEmailRecipient"
 
 interface NodeConfigPanelProps {
   node: WorkflowNode
@@ -30,10 +32,40 @@ export default function NodeConfigPanel({ node, updateNodeData, onClose }: NodeC
   const [sending, setSending] = useState(false)
   const [sendResult, setSendResult] = useState<{ success: boolean; message: string } | null>(null)
 
+  useEffect(() => {
+    if (!isEmail || typeof window === "undefined") return
+    if (to.trim()) return
+
+    const savedRecipient = window.localStorage.getItem(DEFAULT_EMAIL_RECIPIENT_KEY)?.trim()
+    if (!savedRecipient) return
+
+    setTo(savedRecipient)
+    updateNodeData(node.id, {
+      config: {
+        ...((node.data.config as any) || {}),
+        to: savedRecipient,
+      },
+    })
+  }, [isEmail, node.id, node.data.config, to, updateNodeData])
+
   // Persist config changes back to the node
   const syncConfig = (overrides: Record<string, string> = {}) => {
     const config = { to, subject, text: body, cc, bcc, replyTo, ...overrides }
     updateNodeData(node.id, { config })
+  }
+
+  const handleSaveRecipient = () => {
+    const trimmed = to.trim()
+    if (!trimmed || typeof window === "undefined") {
+      return
+    }
+
+    window.localStorage.setItem(DEFAULT_EMAIL_RECIPIENT_KEY, trimmed)
+    syncConfig({ to: trimmed })
+    toast({
+      title: "Recipient saved",
+      description: "Default email recipient has been saved for future use.",
+    })
   }
 
   const handleSendEmail = async () => {
@@ -87,12 +119,23 @@ export default function NodeConfigPanel({ node, updateNodeData, onClose }: NodeC
             <Label htmlFor="email-to" className="text-xs font-medium">
               To
             </Label>
-            <Input
-              id="email-to"
-              placeholder="alice@example.com, bob@example.com"
-              value={to}
-              onChange={(e) => { setTo(e.target.value); syncConfig({ to: e.target.value }) }}
-            />
+            <div className="flex items-center gap-2">
+              <Input
+                id="email-to"
+                placeholder="alice@example.com, bob@example.com"
+                value={to}
+                onChange={(e) => { setTo(e.target.value); syncConfig({ to: e.target.value }) }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="shrink-0"
+                onClick={handleSaveRecipient}
+                disabled={!to.trim()}
+              >
+                Save
+              </Button>
+            </div>
             <p className="text-[10px] text-muted-foreground">Comma-separated for multiple recipients</p>
           </div>
 

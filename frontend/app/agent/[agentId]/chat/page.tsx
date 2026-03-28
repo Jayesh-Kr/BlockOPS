@@ -21,6 +21,9 @@ import type { Agent } from "@/lib/supabase"
 import type { AgentChatResponse } from "@/lib/types"
 import { ethers } from "ethers"
 import { useWallets } from "@privy-io/react-auth"
+import { decryptStoredPrivateKey } from "@/lib/lit-private-key"
+
+const DEFAULT_EMAIL_RECIPIENT_KEY = "blockops.defaultEmailRecipient"
 
 interface ToolCallInfo {
   tool: string
@@ -136,7 +139,7 @@ export default function AgentChatPage() {
   const router = useRouter()
   const params = useParams()
   const agentId = params.agentId as string
-  const { logout, dbUser, privyWalletAddress } = useAuth()
+  const { logout, dbUser, privyWalletAddress, user } = useAuth()
   const { wallets } = useWallets()
 
   const [agent, setAgent] = useState<Agent | null>(null)
@@ -219,13 +222,31 @@ export default function AgentChatPage() {
     setIsLoading(true)
 
     try {
+      let resolvedPrivateKey: string | undefined
+      if (dbUser?.private_key) {
+        try {
+          resolvedPrivateKey = (await decryptStoredPrivateKey(dbUser.private_key)) || undefined
+        } catch (error: any) {
+          console.warn("Failed to decrypt stored private key for chat request:", error)
+        }
+      }
+
+      const savedEmailRecipient = typeof window !== "undefined"
+        ? window.localStorage.getItem(DEFAULT_EMAIL_RECIPIENT_KEY)?.trim()
+        : ""
+      const effectiveDefaultEmailTo = savedEmailRecipient || user?.email?.address || undefined
+      const effectiveWalletAddress = privyWalletAddress || dbUser?.wallet_address || undefined
+
       const data = await sendChatWithMemory({
         agentId: agent.id,
         userId: dbUser.id,
         message: userQuery,
         conversationId: conversationId,
         systemPrompt: `You are a helpful AI assistant for blockchain operations. The agent has these tools: ${agent.tools?.map((t) => t.tool).join(", ")}`,
-        walletAddress: privyWalletAddress || undefined,
+        walletAddress: effectiveWalletAddress,
+        privateKey: resolvedPrivateKey,
+        defaultEmailTo: effectiveDefaultEmailTo,
+        userEmail: user?.email?.address || undefined,
       })
 
       if (data.isNewConversation) {

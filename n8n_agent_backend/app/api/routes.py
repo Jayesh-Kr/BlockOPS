@@ -211,7 +211,7 @@ Response:
         if GEMINI_API_KEY:
             try:
                 model = genai.GenerativeModel(
-                    model_name='gemini-2.0-flash',
+                    model_name='gemini-3.1-flash-lite',
                     generation_config={
                         "temperature": 0.5,
                         "top_p": 0.8,
@@ -273,7 +273,7 @@ async def health_check():
         "blockchain": "Arbitrum Sepolia",
         "ai_providers": {
             "primary": "Groq (moonshotai/kimi-k2-instruct-0905)" if groq_clients else "Not configured",
-            "fallback": "Google Gemini 2.0 Flash" if GEMINI_API_KEY else "Not configured"
+            "fallback": "Google Gemini 3.1 Flash Lite" if GEMINI_API_KEY else "Not configured"
         },
         "backend_url": BACKEND_URL
     }

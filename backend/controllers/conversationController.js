@@ -11,7 +11,18 @@ const { fireEvent } = require('../services/webhookService');
  */
 async function chat(req, res) {
   try {
-    const { agentId, userId, message, conversationId, systemPrompt, walletAddress, enabledTools } = req.body;
+    const {
+      agentId,
+      userId,
+      message,
+      conversationId,
+      systemPrompt,
+      walletAddress,
+      privateKey,
+      enabledTools,
+      defaultEmailTo,
+      userEmail
+    } = req.body;
 
     // Validation
     if (!agentId || !userId || !message) {
@@ -120,12 +131,19 @@ async function chat(req, res) {
     console.log('[Chat] Analyzing message for tool requirements...');
     
     const routingPlan = await intelligentToolRouting(truncatedMessage, messages);
+
+    const TOOL_ALIASES = {
+      tx_status: 'lookup_transaction',
+      wallet_history: 'wallet_history'
+    };
+    const normalizeToolName = (toolName) => TOOL_ALIASES[toolName] || toolName;
     
     // Filter routing plan steps to only allowed tools (if agent has restrictions)
     if (enabledTools && Array.isArray(enabledTools) && enabledTools.length > 0) {
+      const normalizedAllowedTools = enabledTools.map(normalizeToolName);
       if (routingPlan.execution_plan?.steps) {
         routingPlan.execution_plan.steps = routingPlan.execution_plan.steps.filter(
-          step => enabledTools.includes(step.tool)
+          step => normalizedAllowedTools.includes(step.tool)
         );
         if (routingPlan.execution_plan.steps.length === 0) {
           routingPlan.requires_tools = false;
@@ -186,7 +204,10 @@ async function chat(req, res) {
       });
       
       // Also check if "missing" info is actually in conversation context
-      const contextStr = messages.map(m => m.content).join(' ');
+      const contextStr = `${messages.map(m => m.content).join(' ')} ${walletAddress || ''} ${defaultEmailTo || ''} ${userEmail || ''}`;
+      const hasTransferStep = routingPlan.execution_plan?.steps?.some(step => step.tool === 'transfer');
+      const hasSendEmailStep = routingPlan.execution_plan?.steps?.some(step => step.tool === 'send_email');
+      const resolvedEmailTo = defaultEmailTo || userEmail || null;
       const finalMissingInfo = trulyMissingInfo.filter(info => {
         // Check if the missing info might already be in conversation context
         if (/address/i.test(info) && /0x[a-fA-F0-9]{40}/.test(contextStr)) {
@@ -197,11 +218,63 @@ async function chat(req, res) {
           console.log(`[Chat] Balance found in context, removing from missing: "${info}"`);
           return false;
         }
+        // Lit/wallet-sign flow: transfer can run in prepare mode with walletAddress
+        if (walletAddress && hasTransferStep && /private\s*key|signing\s*key|privatekey/i.test(info)) {
+          console.log(`[Chat] Wallet-sign mode active, removing signer-key prompt: "${info}"`);
+          return false;
+        }
+        if (hasSendEmailStep && /subject|body|text|email\s*content|message\s*body/i.test(info)) {
+          console.log(`[Chat] Email content can be auto-generated, removing from missing: "${info}"`);
+          return false;
+        }
+        if (hasSendEmailStep && resolvedEmailTo && /(^|\b)(to|recipient|email\s*address)(\b|$)/i.test(info)) {
+          console.log(`[Chat] Default email recipient available, removing from missing: "${info}"`);
+          return false;
+        }
         return true;
       });
 
       // Only ask for truly missing info that can't be resolved by tools or context
       if (finalMissingInfo.length > 0) {
+        const signerTools = new Set([
+          'deploy_erc20',
+          'deploy_erc721',
+          'mint_nft',
+          'batch_transfer',
+          'batch_mint',
+          'swap_tokens',
+          'bridge_deposit',
+          'bridge_withdraw',
+          'schedule_transfer'
+        ]);
+        const hasSignerKeyMissing = finalMissingInfo.some(info => /private\s*key|signing\s*key|privatekey/i.test(info));
+        const signerSteps = (routingPlan.execution_plan?.steps || []).filter(step => signerTools.has(step.tool));
+
+        if (walletAddress && hasSignerKeyMissing && signerSteps.length > 0) {
+          const signerToolList = [...new Set(signerSteps.map(step => step.tool))].join(', ');
+          const signerMessage = `This request requires transaction signing for tool(s): ${signerToolList}. In direct fallback mode, only transfer supports wallet-sign preparation without a privateKey. Please provide privateKey for these tools, or retry when AI providers recover.`;
+
+          if (useSupabase) {
+            await supabase
+              .from('conversation_messages')
+              .insert({
+                conversation_id: convId,
+                role: 'assistant',
+                content: signerMessage
+              });
+          }
+
+          return res.json({
+            conversationId: convId,
+            message: signerMessage,
+            isNewConversation,
+            messageCount: messages.length + 2,
+            needsMoreInfo: true,
+            missingInfo: finalMissingInfo,
+            signerRequired: true
+          });
+        }
+
         const missingInfoMessage = `I need some additional information to help you:\n${finalMissingInfo.map((info, i) => `${i + 1}. ${info}`).join('\n')}`;
         
         // Save AI response asking for more info (if using Supabase)
@@ -266,7 +339,7 @@ async function chat(req, res) {
           body: JSON.stringify({
             tools: tools,
             user_message: enhancedMessage,
-            private_key: null,
+            private_key: privateKey || null,
             wallet_address: walletAddress || null
           })
         });
@@ -325,11 +398,22 @@ async function chat(req, res) {
           console.log('[Chat] AI provider issue detected, attempting direct tool execution...');
           
           try {
-            const directExecResult = await executeToolsDirectlyService(routingPlan, truncatedMessage);
+            const directExecResult = await executeToolsDirectlyService(
+              routingPlan,
+              truncatedMessage,
+              {
+                walletAddress: walletAddress || null,
+                privateKey: privateKey || null,
+                defaultEmailTo: defaultEmailTo || userEmail || null,
+                userEmail: userEmail || null,
+                apiKey: req.headers['x-api-key'] || process.env.MASTER_API_KEY || null
+              }
+            );
             
-            if (directExecResult && directExecResult.results && directExecResult.results.length > 0 && directExecResult.results.some(r => r.success)) {
+            if (directExecResult && directExecResult.results && directExecResult.results.length > 0) {
               // Successfully executed tools directly!
-              console.log('[Chat] Direct tool execution succeeded');
+              const successCount = directExecResult.results.filter(r => r.success).length;
+              console.log('[Chat] Direct tool execution completed:', `${successCount}/${directExecResult.results.length} successful`);
               aiResponse = formatToolResponse(directExecResult);
               toolResults = {
                 tool_calls: directExecResult.tool_calls,

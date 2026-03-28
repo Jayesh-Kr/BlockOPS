@@ -205,7 +205,7 @@ async def create_workflow(request: WorkflowRequest):
                 logger.info("Attempting Gemini API (Fallback)...")
                 
                 model = genai.GenerativeModel(
-                    model_name='gemini-2.0-flash-exp',
+                    model_name='gemini-3.1-flash-lite',
                     generation_config={
                         "temperature": request.temperature,
                         "max_output_tokens": request.max_tokens,
@@ -215,7 +215,7 @@ async def create_workflow(request: WorkflowRequest):
                 
                 response = model.generate_content(full_prompt)
                 raw_content = response.text
-                provider_used = "Gemini (gemini-2.0-flash-exp)"
+                provider_used = "Gemini (gemini-3.1-flash-lite)"
                 logger.info(f"Gemini response received successfully")
                 
             except Exception as gemini_error:
@@ -261,7 +261,7 @@ async def health_check():
         "blockchain": "Arbitrum Sepolia",
         "ai_providers": {
             "primary": "Groq (llama-3.3-70b-versatile)" if GROQ_API_KEY else "Not configured",
-            "fallback": "Google Gemini 2.0 Flash" if GEMINI_API_KEY else "Not configured"
+            "fallback": "Google Gemini 3.1 Flash Lite" if GEMINI_API_KEY else "Not configured"
         }
     }
 

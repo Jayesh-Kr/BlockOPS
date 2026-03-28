@@ -402,11 +402,29 @@ Respond ONLY with valid JSON, no other text.`;
       }
     }
 
+    // POST-PROCESS: enforce sequential ordering for transfer -> tx_status -> send_email chains.
+    const hasTransfer = steps.some(s => s.tool === 'transfer');
+    const hasTxStatus = steps.some(s => s.tool === 'tx_status');
+    const hasSendEmail = steps.some(s => s.tool === 'send_email');
+    if (hasTransfer && (hasTxStatus || hasSendEmail)) {
+      const order = ['transfer', 'tx_status', 'send_email'];
+      const ordered = [
+        ...order.flatMap(name => steps.filter(s => s.tool === name)),
+        ...steps.filter(s => !order.includes(s.tool))
+      ];
+
+      routingPlan.execution_plan.steps = ordered;
+      routingPlan.execution_plan.type = 'sequential';
+      console.log('[Tool Router] Enforced sequential order for transfer/status/email flow');
+    }
+
     console.log('[Tool Router] AI Routing Plan:', JSON.stringify(routingPlan, null, 2));
     
     return routingPlan;
   } catch (error) {
     console.error('[Tool Router] Error:', error.message);
+    const fallbackSteps = detectToolsWithRegex(userMessage);
+    const isSequential = fallbackSteps.some(step => Array.isArray(step.depends_on) && step.depends_on.length > 0);
     
     // Fallback to simple routing
     return {
@@ -414,8 +432,8 @@ Respond ONLY with valid JSON, no other text.`;
       is_off_topic: false,
       requires_tools: true,
       execution_plan: {
-        type: 'parallel',
-        steps: detectToolsWithRegex(userMessage)
+        type: isSequential ? 'sequential' : 'parallel',
+        steps: fallbackSteps
       },
       missing_info: [],
       complexity: 'simple'
@@ -430,6 +448,11 @@ Respond ONLY with valid JSON, no other text.`;
  */
 function detectToolsWithRegex(message) {
   const tools = [];
+  const hasEmailIntent = /\b(email|send.*email|mail|notify|notification)\b/i.test(message);
+  const hasTransferIntent =
+    /\b(transfer|pay|move)\b/i.test(message) ||
+    (/\bsend\b/i.test(message) && (/0x[a-fA-F0-9]{40}/.test(message) || /\b\d+(?:\.\d+)?\b/.test(message) || /\beth\b/i.test(message)));
+  const hasStatusIntent = /\b(status|confirm|confirmation|tx\s*status|transaction\s*status|check\s*status)\b/i.test(message);
   
   if (/\b(price|fetch.*price|get.*price|check.*price|what.*price|how.*much|cost)\b/i.test(message)) {
     tools.push({ 
@@ -449,12 +472,22 @@ function detectToolsWithRegex(message) {
     });
   }
   
-  if (/\b(transfer|send|pay|move)\b/i.test(message)) {
+  if (hasTransferIntent && !(hasEmailIntent && !/\b(transfer|pay|move)\b/i.test(message))) {
     tools.push({ 
       tool: 'transfer', 
       reason: 'User wants to transfer',
       parameters: {},
       depends_on: [] 
+    });
+  }
+
+  if (hasStatusIntent) {
+    const hasTransferStep = tools.some(t => t.tool === 'transfer');
+    tools.push({
+      tool: 'tx_status',
+      reason: 'User asked to confirm or check transaction status',
+      parameters: {},
+      depends_on: hasTransferStep ? ['transfer'] : []
     });
   }
   
@@ -476,12 +509,15 @@ function detectToolsWithRegex(message) {
     });
   }
 
-  if (/\b(email|send.*email|mail|notify|notification)\b/i.test(message)) {
+  if (hasEmailIntent) {
+    const dependencies = [];
+    if (tools.some(t => t.tool === 'transfer')) dependencies.push('transfer');
+    if (tools.some(t => t.tool === 'tx_status')) dependencies.push('tx_status');
     tools.push({ 
       tool: 'send_email', 
       reason: 'User wants to send an email',
       parameters: {},
-      depends_on: [] 
+      depends_on: dependencies 
     });
   }
   

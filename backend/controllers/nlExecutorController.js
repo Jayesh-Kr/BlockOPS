@@ -160,7 +160,7 @@ Respond ONLY with the JSON object, no other text.`;
     if (!aiResponse && GEMINI_API_KEY) {
       try {
         const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
         
         const result = await model.generateContent(prompt);
         const response = await result.response;

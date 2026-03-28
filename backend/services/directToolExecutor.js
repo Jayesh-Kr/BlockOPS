@@ -5,7 +5,7 @@ const BASE_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
 
 const TOOL_ENDPOINTS = {
   fetch_price: { method: 'POST', path: '/price/token' },
-  get_balance: { method: 'GET', path: '/transfer/balance/{address}' },
+  get_balance: { method: 'GET', path: '/balance/{address}' },
   transfer: { method: 'POST', path: '/transfer' },
   deploy_erc20: { method: 'POST', path: '/token/deploy' },
   deploy_erc721: { method: 'POST', path: '/nft/deploy-collection' },
@@ -17,6 +17,8 @@ const TOOL_ENDPOINTS = {
   calculate: { method: 'LOCAL' },
   batch_transfer:      { method: 'POST', path: '/batch/transfer' },
   batch_mint:          { method: 'POST', path: '/batch/mint' },
+  tx_status:           { method: 'GET',  path: '/wallet/tx/{hash}' },
+  wallet_history:      { method: 'GET',  path: '/wallet/history/{address}' },
   lookup_transaction:  { method: 'GET',  path: '/chain/tx/{txHash}' },
   fetch_events:        { method: 'POST', path: '/chain/events' },
   lookup_block:        { method: 'GET',  path: '/chain/block/{blockNumber}' },
@@ -36,9 +38,132 @@ const TOOL_ENDPOINTS = {
   cancel_schedule:     { method: 'DELETE', path: '/schedule/{id}' }
 };
 
-function mapToolParams(tool, params = {}, fallbackMessage) {
+function extractAddressFromText(text = '') {
+  const match = text.match(/0x[a-fA-F0-9]{40}/);
+  return match ? match[0] : null;
+}
+
+function extractPrivateKeyFromText(text = '') {
+  const match = text.match(/0x[a-fA-F0-9]{64}/);
+  return match ? match[0] : null;
+}
+
+function extractEmailFromText(text = '') {
+  const match = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return match ? match[0] : null;
+}
+
+function extractAmountFromText(text = '') {
+  // Prefer "transfer/send <amount> [ETH]" patterns.
+  const explicitMatch = text.match(/(?:transfer|send|pay|move)\s+([0-9]+(?:\.[0-9]+)?)/i);
+  if (explicitMatch) {
+    return explicitMatch[1];
+  }
+
+  // Fallback to amount adjacent to ETH/token hints.
+  const hintedMatch = text.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:eth|token|usdc|usdt|arb)\b/i);
+  if (hintedMatch) {
+    return hintedMatch[1];
+  }
+
+  return null;
+}
+
+function generateDefaultEmailSubject(message = '') {
+  const lower = message.toLowerCase();
+  if (/transfer|transaction|tx\b/.test(lower)) return 'Transfer and Transaction Update';
+  if (/deploy|token|nft/.test(lower)) return 'Blockchain Operation Update';
+  return 'BlockOps Assistant Update';
+}
+
+function generateDefaultEmailText(message = '') {
+  const cleaned = String(message || '').trim();
+  if (!cleaned) {
+    return 'Hello,\n\nThis is an automated update from your BlockOps assistant.\n\nRegards,\nBlockOps';
+  }
+
+  return [
+    'Hello,',
+    '',
+    'Here is the latest update from your BlockOps assistant:',
+    cleaned,
+    '',
+    'Regards,',
+    'BlockOps'
+  ].join('\n');
+}
+
+function generateEmailFromPreviousResults(previousResults = [], fallbackMessage = '') {
+  const lines = previousResults.map((result) => {
+    const toolName = result?.tool || 'tool';
+    if (!result?.success) {
+      return `- ${toolName}: failed (${result?.error || 'unknown error'})`;
+    }
+
+    if (toolName === 'transfer') {
+      const txHash = result?.result?.transactionHash || result?.result?.txHash;
+      if (txHash) return `- transfer: completed (tx ${txHash})`;
+      if (result?.result?.prepared || result?.result?.requiresSigning) {
+        return '- transfer: prepared and awaiting wallet signature';
+      }
+      return '- transfer: completed';
+    }
+
+    if (toolName === 'tx_status') {
+      const status = result?.result?.status || 'unknown';
+      const hash = result?.result?.hash || result?.result?.txHash;
+      return hash ? `- tx_status: ${status} (${hash})` : `- tx_status: ${status}`;
+    }
+
+    if (toolName === 'get_balance') {
+      const balance = result?.result?.balance;
+      const address = result?.result?.address;
+      if (balance && address) return `- get_balance: ${balance} ETH at ${address}`;
+    }
+
+    return `- ${toolName}: success`;
+  }).filter(Boolean);
+
+  const subject =
+    previousResults.some(r => r?.tool === 'tx_status')
+      ? 'Transaction Status Confirmation'
+      : previousResults.some(r => r?.tool === 'transfer')
+        ? 'Transfer Update'
+        : generateDefaultEmailSubject(fallbackMessage);
+
+  const bodyLines = [
+    'Hello,',
+    '',
+    'Here is your requested blockchain update:',
+    ...lines,
+    '',
+    `Original request: "${String(fallbackMessage || '').trim()}"`,
+    '',
+    'Regards,',
+    'BlockOps'
+  ];
+
+  return {
+    subject,
+    text: bodyLines.join('\n')
+  };
+}
+
+function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}) {
   const missing = [];
   let mapped = { ...params };
+  const contextualAddress =
+    params.wallet_address ||
+    params.address ||
+    executionContext.walletAddress ||
+    executionContext.wallet_address ||
+    extractAddressFromText(fallbackMessage);
+  const contextualPrivateKey =
+    params.privateKey ||
+    params.private_key ||
+    executionContext.privateKey ||
+    executionContext.private_key ||
+    extractPrivateKeyFromText(fallbackMessage);
 
   switch (tool) {
     case 'fetch_price': {
@@ -50,25 +175,40 @@ function mapToolParams(tool, params = {}, fallbackMessage) {
       break;
     }
     case 'get_balance': {
-      const address = params.address || params.wallet_address;
+      const address = params.address || params.wallet_address || contextualAddress;
       mapped = { address };
       if (!address) missing.push('address');
       break;
     }
     case 'transfer': {
-      const privateKey = params.privateKey || params.private_key;
-      const toAddress = params.toAddress || params.to_address;
-      const amount = params.amount;
-      const tokenId = params.tokenId || params.token_id || params.tokenId;
-      mapped = { privateKey, toAddress, amount };
+      const privateKey = contextualPrivateKey;
+      const toAddress =
+        params.toAddress ||
+        params.to_address ||
+        params.address ||
+        params.recipient ||
+        params.recipientAddress ||
+        extractAddressFromText(fallbackMessage);
+      const amount = params.amount || params.value || extractAmountFromText(fallbackMessage);
+      const tokenId = params.tokenId || params.token_id || params.tokenAddress || params.token_address;
+      const fromAddress =
+        params.fromAddress ||
+        params.from_address ||
+        params.wallet_address ||
+        executionContext.walletAddress ||
+        executionContext.wallet_address ||
+        null;
+      mapped = { privateKey, fromAddress, toAddress, amount };
       if (tokenId !== undefined) mapped.tokenId = tokenId;
-      if (!privateKey) missing.push('privateKey');
+      // If wallet is available but private key is not, we can still prepare the transfer
+      // for client/Lit signing via /transfer/prepare.
+      if (!privateKey && !fromAddress) missing.push('privateKey');
       if (!toAddress) missing.push('toAddress');
       if (!amount) missing.push('amount');
       break;
     }
     case 'deploy_erc20': {
-      const privateKey = params.privateKey || params.private_key;
+      const privateKey = contextualPrivateKey;
       const name = params.name;
       const symbol = params.symbol;
       const initialSupply = params.initialSupply || params.initial_supply;
@@ -82,7 +222,7 @@ function mapToolParams(tool, params = {}, fallbackMessage) {
       break;
     }
     case 'deploy_erc721': {
-      const privateKey = params.privateKey || params.private_key;
+      const privateKey = contextualPrivateKey;
       const name = params.name;
       const symbol = params.symbol;
       const baseURI = params.baseURI || params.base_uri;
@@ -94,13 +234,13 @@ function mapToolParams(tool, params = {}, fallbackMessage) {
       break;
     }
     case 'mint_nft': {
-      const privateKey = params.privateKey || params.private_key;
+      const privateKey = contextualPrivateKey;
       const collectionAddress = params.collectionAddress || params.contract_address;
       const toAddress = params.toAddress || params.to_address;
       mapped = { privateKey, collectionAddress, toAddress };
       if (!privateKey) missing.push('privateKey');
       if (!collectionAddress) missing.push('collectionAddress');
-      if (!toAddress) missing.push('toAddress');
+      if (!toAddress) missing.push('toAddress'); 
       break;
     }
     case 'get_token_info': {
@@ -111,7 +251,7 @@ function mapToolParams(tool, params = {}, fallbackMessage) {
     }
     case 'get_token_balance': {
       const tokenId = params.tokenId || params.token_address;
-      const ownerAddress = params.ownerAddress || params.wallet_address;
+      const ownerAddress = params.ownerAddress || params.wallet_address || contextualAddress;
       mapped = { tokenId, ownerAddress };
       if (!tokenId) missing.push('tokenId');
       if (!ownerAddress) missing.push('ownerAddress');
@@ -126,9 +266,24 @@ function mapToolParams(tool, params = {}, fallbackMessage) {
       break;
     }
     case 'send_email': {
-      const to = params.to;
-      const subject = params.subject;
-      const text = params.text;
+      const to =
+        params.to ||
+        params.email ||
+        params.recipient ||
+        executionContext.defaultEmailTo ||
+        executionContext.userEmail ||
+        extractEmailFromText(fallbackMessage);
+      const subject =
+        params.subject ||
+        params.title ||
+        params.emailSubject ||
+        generateDefaultEmailSubject(fallbackMessage);
+      const text =
+        params.text ||
+        params.body ||
+        params.message ||
+        params.content ||
+        generateDefaultEmailText(fallbackMessage);
       const html = params.html;
       const cc = params.cc;
       const bcc = params.bcc;
@@ -148,7 +303,7 @@ function mapToolParams(tool, params = {}, fallbackMessage) {
       break;
     }
     case 'batch_transfer': {
-      const privateKey = params.privateKey || params.private_key;
+      const privateKey = contextualPrivateKey;
       const recipients = params.recipients;
       mapped = { privateKey, recipients };
       if (!privateKey) missing.push('privateKey');
@@ -156,13 +311,27 @@ function mapToolParams(tool, params = {}, fallbackMessage) {
       break;
     }
     case 'batch_mint': {
-      const privateKey = params.privateKey || params.private_key;
+      const privateKey = contextualPrivateKey;
       const collectionAddress = params.collectionAddress || params.collection_address || params.contract_address;
       const recipients = params.recipients;
       mapped = { privateKey, collectionAddress, recipients };
       if (!privateKey) missing.push('privateKey');
       if (!collectionAddress) missing.push('collectionAddress');
       if (!recipients || !Array.isArray(recipients) || recipients.length === 0) missing.push('recipients');
+      break;
+    }
+    case 'tx_status': {
+      const hash = params.hash || params.txHash || params.tx_hash;
+      mapped = { hash };
+      if (!hash) missing.push('hash');
+      break;
+    }
+    case 'wallet_history': {
+      const address = params.address || params.wallet_address || contextualAddress;
+      const page = params.page;
+      const limit = params.limit;
+      mapped = { address, page, limit };
+      if (!address) missing.push('address');
       break;
     }
     case 'lookup_transaction': {
@@ -194,7 +363,7 @@ function mapToolParams(tool, params = {}, fallbackMessage) {
       break;
     }
     case 'get_portfolio': {
-      const address = params.address || params.wallet_address;
+      const address = params.address || params.wallet_address || contextualAddress;
       mapped = { address };
       if (!address) missing.push('address');
       break;
@@ -206,7 +375,7 @@ function mapToolParams(tool, params = {}, fallbackMessage) {
       break;
     }
     case 'reverse_ens': {
-      const address = params.address || params.wallet_address;
+      const address = params.address || params.wallet_address || contextualAddress;
       mapped = { address };
       if (!address) missing.push('address');
       break;
@@ -228,7 +397,7 @@ function mapToolParams(tool, params = {}, fallbackMessage) {
       break;
     }
     case 'swap_tokens': {
-      const privateKey       = params.privateKey || params.private_key;
+      const privateKey       = contextualPrivateKey;
       const tokenIn          = params.tokenIn  || params.token_in  || params.from_token;
       const tokenOut         = params.tokenOut || params.token_out || params.to_token;
       const amountIn         = params.amountIn || params.amount_in || params.amount;
@@ -256,7 +425,7 @@ function mapToolParams(tool, params = {}, fallbackMessage) {
       break;
     }
     case 'bridge_deposit': {
-      const privateKey         = params.privateKey || params.private_key;
+      const privateKey         = contextualPrivateKey;
       const amount             = params.amount;
       const tokenAddress       = params.tokenAddress || params.token_address || params.token;
       const destinationAddress = params.destinationAddress || params.destination || params.to;
@@ -268,7 +437,7 @@ function mapToolParams(tool, params = {}, fallbackMessage) {
       break;
     }
     case 'bridge_withdraw': {
-      const privateKey         = params.privateKey || params.private_key;
+      const privateKey         = contextualPrivateKey;
       const amount             = params.amount;
       const tokenAddress       = params.tokenAddress || params.token_address || params.token;
       const destinationAddress = params.destinationAddress || params.destination || params.to;
@@ -286,7 +455,7 @@ function mapToolParams(tool, params = {}, fallbackMessage) {
       break;
     }
     case 'schedule_transfer': {
-      const privateKey      = params.privateKey || params.private_key;
+      const privateKey      = contextualPrivateKey;
       const toAddress       = params.toAddress  || params.to_address || params.to;
       const amount          = params.amount;
       const cronExpression  = params.cronExpression || params.cron || params.cron_expression || params.schedule;
@@ -326,6 +495,7 @@ function replacePathParams(path, params) {
     '{ownerAddress}': 'ownerAddress',
     '{collectionAddress}': 'collectionAddress',
     '{txHash}': 'txHash',
+    '{hash}': 'hash',
     '{blockNumber}': 'blockNumber',
     '{name}': 'name',
     '{id}': 'id'
@@ -454,11 +624,51 @@ function safeCalculate(params) {
   }
 }
 
-async function executeToolStep(step, fallbackMessage) {
+async function executeToolStep(step, fallbackMessage, executionContext = {}) {
   const { tool, parameters } = step;
-  const mapping = mapToolParams(tool, parameters, fallbackMessage);
+  const mapping = mapToolParams(tool, parameters, fallbackMessage, executionContext);
+  const headers = {};
+  if (executionContext.apiKey) {
+    headers['x-api-key'] = executionContext.apiKey;
+  }
+
+  const isSignerTool = new Set([
+    'transfer',
+    'deploy_erc20',
+    'deploy_erc721',
+    'mint_nft',
+    'batch_transfer',
+    'batch_mint',
+    'swap_tokens',
+    'bridge_deposit',
+    'bridge_withdraw',
+    'schedule_transfer'
+  ]).has(tool);
+
+  // For transfer, support wallet-address-based prepare flow (Lit/MetaMask signing).
+  const canPrepareTransfer =
+    tool === 'transfer' &&
+    !mapping.mapped.privateKey &&
+    mapping.mapped.fromAddress &&
+    mapping.mapped.toAddress &&
+    mapping.mapped.amount;
 
   if (mapping.missing.length > 0) {
+    const missingPrivateKeyOnly =
+      mapping.missing.length === 1 &&
+      mapping.missing[0] === 'privateKey';
+
+    if (isSignerTool && missingPrivateKeyOnly && !canPrepareTransfer) {
+      return {
+        tool_call: { tool, parameters: mapping.mapped },
+        result: {
+          success: false,
+          tool,
+          error: `This action requires a signer. Provide privateKey, or use a tool/flow that supports prepared transactions for wallet signing.`
+        }
+      };
+    }
+
     return {
       tool_call: { tool, parameters: mapping.mapped },
       result: {
@@ -475,6 +685,45 @@ async function executeToolStep(step, fallbackMessage) {
       tool_call: { tool, parameters: mapping.mapped },
       result: { success: false, tool, error: 'Tool not supported for direct execution' }
     };
+  }
+
+  if (canPrepareTransfer) {
+    try {
+      const preparePayload = {
+        fromAddress: mapping.mapped.fromAddress,
+        toAddress: mapping.mapped.toAddress,
+        amount: mapping.mapped.amount
+      };
+      if (mapping.mapped.tokenId !== undefined) {
+        preparePayload.tokenId = mapping.mapped.tokenId;
+      }
+
+      const prepareResponse = await axios.post(`${BASE_URL}/transfer/prepare`, preparePayload, {
+        headers: Object.keys(headers).length ? headers : undefined,
+        timeout: 30000
+      });
+
+      return {
+        tool_call: { tool, parameters: mapping.mapped },
+        result: {
+          success: true,
+          tool,
+          result: {
+            ...(prepareResponse.data || {}),
+            prepared: true,
+            requiresSigning: true
+          }
+        }
+      };
+    } catch (error) {
+      const statusCode = error.response?.status;
+      const backendError = error.response?.data?.error || error.response?.data?.message || error.response?.data?.details;
+      const detail = backendError || error.message;
+      return {
+        tool_call: { tool, parameters: mapping.mapped },
+        result: { success: false, tool, error: statusCode ? `HTTP ${statusCode}: ${detail}` : detail }
+      };
+    }
   }
 
   if (config.method === 'LOCAL' && tool === 'calculate') {
@@ -496,16 +745,23 @@ async function executeToolStep(step, fallbackMessage) {
   try {
     let response;
     if (config.method === 'POST') {
-      response = await axios.post(url, requestParams, { timeout: 30000 });
+      response = await axios.post(url, requestParams, {
+        headers: Object.keys(headers).length ? headers : undefined,
+        timeout: 30000
+      });
     } else if (config.method === 'GET') {
       // Pass any remaining (non-path) params as query string
       const hasQueryParams = Object.keys(requestParams).length > 0;
       response = await axios.get(url, {
+        headers: Object.keys(headers).length ? headers : undefined,
         params: hasQueryParams ? requestParams : undefined,
         timeout: 30000
       });
     } else if (config.method === 'DELETE') {
-      response = await axios.delete(url, { timeout: 30000 });
+      response = await axios.delete(url, {
+        headers: Object.keys(headers).length ? headers : undefined,
+        timeout: 30000
+      });
     } else {
       throw new Error(`Unsupported method: ${config.method}`);
     }
@@ -515,19 +771,26 @@ async function executeToolStep(step, fallbackMessage) {
       result: { success: true, tool, result: response.data }
     };
   } catch (error) {
+    const statusCode = error.response?.status;
+    const backendError = error.response?.data?.error || error.response?.data?.message || error.response?.data?.details;
+    const detail = backendError || error.message;
     return {
       tool_call: { tool, parameters: mapping.mapped },
-      result: { success: false, tool, error: error.message }
+      result: { success: false, tool, error: statusCode ? `HTTP ${statusCode}: ${detail}` : detail }
     };
   }
 }
 
 function interpolateParameters(params, previousResults) {
-  if (!params || !previousResults || previousResults.length === 0) {
+  if (!params) {
     return params;
   }
 
   const interpolated = { ...params };
+
+  if (!previousResults || previousResults.length === 0) {
+    return interpolated;
+  }
   
   // Collect all successful results
   const resultsByTool = {};
@@ -636,7 +899,41 @@ function interpolateParameters(params, previousResults) {
   return interpolated;
 }
 
-async function executeToolsDirectly(routingPlan, fallbackMessage) {
+function interpolateStepParameters(step, previousResults, fallbackMessage = '', executionContext = {}) {
+  const tool = step?.tool;
+  const interpolated = interpolateParameters(step?.parameters || {}, previousResults);
+
+  if (tool === 'tx_status' && !interpolated.hash && !interpolated.txHash && !interpolated.tx_hash) {
+    const latestTransfer = [...previousResults].reverse().find(r => r?.tool === 'transfer' && r?.success);
+    const transferHash = latestTransfer?.result?.transactionHash || latestTransfer?.result?.txHash;
+    if (transferHash) {
+      interpolated.hash = transferHash;
+    }
+  }
+
+  if (tool === 'send_email') {
+    const generated = generateEmailFromPreviousResults(previousResults, fallbackMessage);
+
+    if (!interpolated.to) {
+      interpolated.to =
+        executionContext.defaultEmailTo ||
+        executionContext.userEmail ||
+        extractEmailFromText(fallbackMessage);
+    }
+
+    if (!interpolated.subject) {
+      interpolated.subject = generated.subject;
+    }
+
+    if (!interpolated.text && !interpolated.html) {
+      interpolated.text = generated.text;
+    }
+  }
+
+  return interpolated;
+}
+
+async function executeToolsDirectly(routingPlan, fallbackMessage, executionContext = {}) {
   if (!routingPlan?.execution_plan?.steps?.length) {
     return { tool_calls: [], results: [] };
   }
@@ -644,7 +941,7 @@ async function executeToolsDirectly(routingPlan, fallbackMessage) {
   const { steps, type } = routingPlan.execution_plan;
 
   if (type === 'parallel') {
-    const results = await Promise.all(steps.map(step => executeToolStep(step, fallbackMessage)));
+    const results = await Promise.all(steps.map(step => executeToolStep(step, fallbackMessage, executionContext)));
     return {
       tool_calls: results.map(item => item.tool_call),
       results: results.map(item => item.result)
@@ -657,15 +954,12 @@ async function executeToolsDirectly(routingPlan, fallbackMessage) {
     // Interpolate parameters based on previous results
     const interpolatedStep = {
       ...step,
-      parameters: interpolateParameters(step.parameters, toolResults)
+      parameters: interpolateStepParameters(step, toolResults, fallbackMessage, executionContext)
     };
     
-    const { tool_call, result } = await executeToolStep(interpolatedStep, fallbackMessage);
+    const { tool_call, result } = await executeToolStep(interpolatedStep, fallbackMessage, executionContext);
     toolCalls.push(tool_call);
     toolResults.push(result);
-    if (!result.success) {
-      break;
-    }
   }
 
   return { tool_calls: toolCalls, results: toolResults };
@@ -704,6 +998,12 @@ function formatToolResponse(toolResults) {
         return `Balance for ${payload.address}: ${payload.balance} ETH.`;
       }
       case 'transfer': {
+        if (payload.requiresMetaMask || payload.requiresSigning || payload.prepared) {
+          const details = payload.details || {};
+          const to = details.toAddress || payload.transaction?.to || 'unknown';
+          const amount = details.amount || 'unknown';
+          return `Transfer prepared for wallet signing: ${amount} ETH to ${to}. Please sign this transaction in your wallet/Lit flow.`;
+        }
         return `Transfer completed. Tx: ${payload.transactionHash || 'unknown'}.`;
       }
       case 'deploy_erc20': {
@@ -735,6 +1035,13 @@ function formatToolResponse(toolResults) {
       }
       case 'batch_mint': {
         return `Batch mint complete. ${payload.succeeded}/${payload.recipientCount} NFTs minted successfully${payload.failed > 0 ? `, ${payload.failed} failed` : ''}.`;
+      }
+      case 'tx_status': {
+        return `Transaction ${payload.hash?.slice(0, 10)}... is ${payload.status || 'unknown'} with ${payload.confirmations ?? 0} confirmation(s).`;
+      }
+      case 'wallet_history': {
+        const txs = payload.transactions || [];
+        return `Wallet history for ${payload.address?.slice(0, 10)}...: ${txs.length} transaction(s) returned.`;
       }
       case 'lookup_transaction': {
         const status = payload.receipt?.status || 'pending';

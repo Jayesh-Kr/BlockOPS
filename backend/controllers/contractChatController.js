@@ -154,7 +154,7 @@ async function getAIResponse(systemPrompt, chatHistory, question) {
   if (!aiResponse && GEMINI_API_KEY) {
     try {
       const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
 
       // Gemini uses a different format — combine system prompt with first message
       const geminiPrompt = `${systemPrompt}\n\n---\n\nConversation so far:\n${

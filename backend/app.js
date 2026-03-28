@@ -28,6 +28,8 @@ const scheduleRoutes  = require('./routes/scheduleRoutes');
 const { reloadJobsFromDB } = require('./controllers/scheduleController');
 const telegramRoutes  = require('./routes/telegramRoutes');
 const agentRoutes     = require('./routes/agentRoutes');
+const { prepareTransfer } = require('./controllers/transferController');
+const { getTransactionStatus, getWalletHistory } = require('./controllers/walletController');
 const { startLongPolling, stopLongPolling } = require('./services/telegramService');
 
 // Initialize Express app
@@ -79,6 +81,13 @@ app.use('/api/orbit', orbitRoutes);
 
 // Conversation chat: rate limited; api key optional (attaches context if present)
 app.use('/api', chatLimiter, apiKeyAuth({ optional: true }), conversationRoutes);
+
+// Public prepare-only transfer route for wallet/Lit signing flows (no server-side signing)
+app.post('/transfer/prepare', chatLimiter, prepareTransfer);
+
+// Public read-only wallet routes for status/history in direct fallback mode
+app.get('/wallet/tx/:hash', chatLimiter, getTransactionStatus);
+app.get('/wallet/history/:address', chatLimiter, getWalletHistory);
 
 // ── Protected routes (API key required + transaction rate limit) ─────────────
 const authGuard = [txLimiter, apiKeyAuth()];
