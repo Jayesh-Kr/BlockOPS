@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS agents (
   api_key TEXT UNIQUE NOT NULL,
   tools JSONB NOT NULL DEFAULT '[]'::jsonb,
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused', 'archived')),
+  on_chain_id TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -79,4 +80,3 @@ ORDER BY table_name, ordinal_position;
 -- OPTIONAL: Run DATABASE_SCHEMA.sql for complete setup
 -- including conversations, messages, executions tables
 -- ============================================
-

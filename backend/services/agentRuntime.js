@@ -4,6 +4,10 @@ const { getProvider, getWallet } = require('../utils/blockchain');
 const { fireEvent } = require('./webhookService');
 const { AgentOrchestrator } = require('./agentCoordinator');
 const supabase = require('../config/supabase');
+const {
+  isMissingOnChainIdColumnError,
+  getOnChainIdColumnMigrationMessage,
+} = require('../utils/agentSchema');
 
 // Registry ABIs (simplified for our needs)
 const IDENTITY_ABI = [
@@ -126,11 +130,20 @@ class BlockOpsAgentRuntime {
 
     try {
       // Check if we already have an on-chain ID in Supabase
-      const { data: agent } = await supabase
+      const { data: agent, error: agentError } = await supabase
         .from('agents')
         .select('on_chain_id')
         .eq('id', this.agentId)
         .single();
+
+      if (agentError) {
+        if (isMissingOnChainIdColumnError(agentError)) {
+          console.warn(`[Runtime] ${getOnChainIdColumnMigrationMessage()}`);
+          return null;
+        }
+
+        throw new Error(agentError.message);
+      }
 
       if (agent?.on_chain_id) {
         return agent.on_chain_id;
@@ -150,10 +163,18 @@ class BlockOpsAgentRuntime {
 
       if (onChainId) {
         // Save to Supabase
-        await supabase
+        const { error: updateError } = await supabase
           .from('agents')
           .update({ on_chain_id: onChainId.toString() })
           .eq('id', this.agentId);
+
+        if (updateError) {
+          if (isMissingOnChainIdColumnError(updateError)) {
+            throw new Error(`${getOnChainIdColumnMigrationMessage()} The agent was registered on-chain, but the ID could not be saved locally.`);
+          }
+
+          throw new Error(updateError.message);
+        }
         
         return onChainId.toString();
       }

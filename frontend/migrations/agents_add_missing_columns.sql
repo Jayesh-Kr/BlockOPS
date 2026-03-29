@@ -29,12 +29,16 @@ ALTER TABLE agents
   ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'
   CHECK (status IN ('active', 'paused', 'archived'));
 
--- 6. Indexes
+-- 6. Add on-chain registry column
+ALTER TABLE agents
+  ADD COLUMN IF NOT EXISTS on_chain_id TEXT;
+
+-- 7. Indexes
 CREATE INDEX IF NOT EXISTS idx_agents_api_key    ON agents(api_key);
 CREATE INDEX IF NOT EXISTS idx_agents_status     ON agents(status);
 CREATE INDEX IF NOT EXISTS idx_agents_created_at ON agents(created_at DESC);
 
--- 7. Verify
+-- 8. Verify
 SELECT column_name, data_type, is_nullable
 FROM information_schema.columns
 WHERE table_name = 'agents'

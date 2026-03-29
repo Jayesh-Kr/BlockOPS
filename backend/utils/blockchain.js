@@ -1,6 +1,15 @@
 const { ethers } = require('ethers');
 const { ARBITRUM_SEPOLIA_RPC } = require('../config/constants');
 
+function normalizePrivateKey(privateKey) {
+  if (typeof privateKey !== 'string') return null;
+
+  const trimmed = privateKey.trim();
+  if (!trimmed) return null;
+
+  return trimmed.startsWith('0x') ? trimmed : `0x${trimmed}`;
+}
+
 /**
  * Get a provider instance for Arbitrum Sepolia
  * @returns {ethers.JsonRpcProvider} Provider instance
@@ -17,7 +26,22 @@ function getProvider() {
  */
 function getWallet(privateKey, provider = null) {
   const _provider = provider || getProvider();
-  return new ethers.Wallet(privateKey, _provider);
+  return new ethers.Wallet(normalizePrivateKey(privateKey), _provider);
+}
+
+/**
+ * Get the optional backend signer wallet from environment configuration
+ * @param {ethers.JsonRpcProvider} provider - Provider instance (optional)
+ * @returns {ethers.Wallet|null} Wallet instance or null when not configured
+ */
+function getServerWallet(provider = null) {
+  const serverPrivateKey = normalizePrivateKey(process.env.SERVER_SIGNER_PRIVATE_KEY);
+
+  if (!serverPrivateKey) {
+    return null;
+  }
+
+  return getWallet(serverPrivateKey, provider);
 }
 
 /**
@@ -86,6 +110,7 @@ function parseEventFromReceipt(receipt, contractInterface, eventName) {
 module.exports = {
   getProvider,
   getWallet,
+  getServerWallet,
   getContract,
   hasSufficientBalance,
   getGasEstimateWithBuffer,

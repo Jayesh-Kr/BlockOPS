@@ -35,6 +35,7 @@ import { AgentWalletModal } from "@/components/agent-wallet"
 import { UserProfile } from "@/components/user-profile"
 import { PrivateKeySetupModal } from "@/components/private-key-setup-modal"
 import { toast } from "@/components/ui/use-toast"
+import { decryptStoredPrivateKey } from "@/lib/lit-private-key"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -62,7 +63,7 @@ import {
 
 export default function MyAgents() {
   const router = useRouter()
-  const { ready, authenticated, user, logout, loading: authLoading, isWalletLogin, showPrivateKeySetup, setShowPrivateKeySetup, syncUser } = useAuth()
+  const { ready, authenticated, user, dbUser, logout, loading: authLoading, isWalletLogin, showPrivateKeySetup, setShowPrivateKeySetup, syncUser } = useAuth()
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -119,13 +120,33 @@ export default function MyAgents() {
     if (!user?.id) return
     setRegisteringAgentId(agentId)
     try {
+      let resolvedPrivateKey: string | undefined
+
+      if (dbUser?.private_key) {
+        try {
+          resolvedPrivateKey = (await decryptStoredPrivateKey(dbUser.private_key)) || undefined
+        } catch (error) {
+          console.error("Error decrypting stored private key:", error)
+          setShowPrivateKeySetup(true)
+          toast({
+            title: "Wallet setup required",
+            description: "Your saved signing key could not be used. Please re-enter your private key to continue.",
+            variant: "destructive",
+          })
+          return
+        }
+      }
+
       const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${agentId}/register-on-chain`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-api-key': BLOCKCHAIN_API_KEY,
         },
-        body: JSON.stringify({ userId: user.id }),
+        body: JSON.stringify({
+          userId: user.id,
+          ...(resolvedPrivateKey ? { privateKey: resolvedPrivateKey } : {}),
+        }),
       })
 
       const data = await response.json()
@@ -137,6 +158,9 @@ export default function MyAgents() {
         // Refresh agent list to show the new ID
         fetchAgents()
       } else {
+        if (typeof data.error === "string" && data.error.includes("No signer available for on-chain registration")) {
+          setShowPrivateKeySetup(true)
+        }
         throw new Error(data.error || "Failed to register agent")
       }
     } catch (error: any) {
@@ -572,4 +596,3 @@ console.log(data);`}
     </TooltipProvider>
   )
 }
-

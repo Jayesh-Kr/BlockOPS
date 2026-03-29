@@ -13,10 +13,17 @@
  */
 
 const crypto = require('crypto');
-const bcrypt = require('bcrypt');
 const { ethers } = require('ethers');
-const { getProvider, getWallet } = require('../utils/blockchain');
+const { getProvider, getWallet, getServerWallet } = require('../utils/blockchain');
 const supabase = require('../config/supabase');
+const {
+  AGENT_LIST_SELECT,
+  AGENT_LIST_SELECT_LEGACY,
+  AGENT_REGISTRATION_SELECT,
+  AGENT_REGISTRATION_SELECT_LEGACY,
+  isMissingOnChainIdColumnError,
+  getOnChainIdColumnMigrationMessage,
+} = require('../utils/agentSchema');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper: Generate API key
@@ -149,11 +156,20 @@ async function listAgents(req, res) {
       });
     }
 
-    const { data, error } = await supabase
-      .from('agents')
-      .select('id, user_id, name, description, api_key, tools, status, system_prompt, enabled_tools, wallet_address, on_chain_id, api_key_prefix, is_public, created_at, updated_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+    const buildListAgentsQuery = (selectColumns) => (
+      supabase
+        .from('agents')
+        .select(selectColumns)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+    );
+
+    let { data, error } = await buildListAgentsQuery(AGENT_LIST_SELECT);
+
+    if (isMissingOnChainIdColumnError(error)) {
+      console.warn('[Agent] agents.on_chain_id is missing; falling back to legacy list query.');
+      ({ data, error } = await buildListAgentsQuery(AGENT_LIST_SELECT_LEGACY));
+    }
 
     if (error) {
       console.error('[Agent] List error:', error);
@@ -161,7 +177,7 @@ async function listAgents(req, res) {
     }
 
     // Check if any agents are linked to Telegram
-    const agentIds = data.map(a => a.id);
+    const agentIds = (data || []).map(a => a.id);
     let linkedMap = {};
     
     if (agentIds.length > 0) {
@@ -190,7 +206,7 @@ async function listAgents(req, res) {
       system_prompt: agent.system_prompt,
       enabled_tools: agent.enabled_tools,
       wallet_address: agent.wallet_address,
-      on_chain_id: agent.on_chain_id,
+      on_chain_id: agent.on_chain_id || null,
       api_key_prefix: agent.api_key_prefix,
       is_public: agent.is_public,
       created_at: agent.created_at,
@@ -444,11 +460,22 @@ async function registerAgentOnChain(req, res) {
     const { userId, privateKey } = req.body;
 
     // Verify ownership
-    const { data: agent, error: agentError } = await supabase
-      .from('agents')
-      .select('user_id, on_chain_id, name')
-      .eq('id', id)
-      .single();
+    const buildRegistrationQuery = (selectColumns) => (
+      supabase
+        .from('agents')
+        .select(selectColumns)
+        .eq('id', id)
+        .single()
+    );
+
+    let onChainIdColumnAvailable = true;
+    let { data: agent, error: agentError } = await buildRegistrationQuery(AGENT_REGISTRATION_SELECT);
+
+    if (isMissingOnChainIdColumnError(agentError)) {
+      onChainIdColumnAvailable = false;
+      console.warn('[Agent] agents.on_chain_id is missing; blocking on-chain registration until migration is applied.');
+      ({ data: agent, error: agentError } = await buildRegistrationQuery(AGENT_REGISTRATION_SELECT_LEGACY));
+    }
 
     if (agentError || !agent) {
       return res.status(404).json({ success: false, error: 'Agent not found' });
@@ -456,6 +483,13 @@ async function registerAgentOnChain(req, res) {
 
     if (userId && agent.user_id !== userId) {
       return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+
+    if (!onChainIdColumnAvailable) {
+      return res.status(500).json({
+        success: false,
+        error: getOnChainIdColumnMigrationMessage(),
+      });
     }
 
     if (agent.on_chain_id) {
@@ -468,9 +502,26 @@ async function registerAgentOnChain(req, res) {
 
     // Initialize blockchain provider and wallet
     const provider = getProvider();
-    const wallet = privateKey 
-      ? new ethers.Wallet(privateKey, provider)
-      : getWallet(); // Use master wallet if none provided
+    let wallet = null;
+
+    try {
+      wallet = privateKey
+        ? getWallet(privateKey, provider)
+        : getServerWallet(provider);
+    } catch (walletError) {
+      const errorMessage = privateKey
+        ? 'The provided private key is invalid. Please re-save your wallet key and try again.'
+        : 'SERVER_SIGNER_PRIVATE_KEY is configured incorrectly in backend/.env. Update it to a valid 32-byte hex private key and restart the backend.';
+
+      return res.status(400).json({ success: false, error: errorMessage });
+    }
+
+    if (!wallet) {
+      return res.status(400).json({
+        success: false,
+        error: 'No signer available for on-chain registration. Add your private key in the app, or set SERVER_SIGNER_PRIVATE_KEY in backend/.env and restart the backend.',
+      });
+    }
 
     const identityAddr = process.env.IDENTITY_REGISTRY_ADDRESS;
     if (!identityAddr) {
@@ -511,10 +562,25 @@ async function registerAgentOnChain(req, res) {
     }
 
     // Save to Supabase
-    await supabase
+    const { error: updateError } = await supabase
       .from('agents')
       .update({ on_chain_id: onChainId })
       .eq('id', id);
+
+    if (updateError) {
+      console.error('[Agent] Failed to persist on-chain ID:', updateError);
+
+      const errorMessage = isMissingOnChainIdColumnError(updateError)
+        ? `${getOnChainIdColumnMigrationMessage()} The agent was registered on-chain as ${onChainId}, but the ID could not be saved locally.`
+        : `Agent registered on-chain as ${onChainId}, but failed to save the ID locally: ${updateError.message}`;
+
+      return res.status(500).json({
+        success: false,
+        error: errorMessage,
+        onChainId,
+        transactionHash: receipt.hash,
+      });
+    }
 
     return res.json({
       success: true,
@@ -614,8 +680,9 @@ async function verifyApiKey(agentId, apiKey) {
       .single();
 
     if (!data) return false;
-    
-    return await bcrypt.compare(apiKey, data.api_key_hash);
+
+    const hashedApiKey = crypto.createHash('sha256').update(apiKey).digest('hex');
+    return hashedApiKey === data.api_key_hash;
   } catch (err) {
     console.error('[Agent] verifyApiKey error:', err);
     return false;

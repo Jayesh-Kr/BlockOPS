@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS agents (
   system_prompt TEXT,
   enabled_tools TEXT[], -- array of tool names, e.g. ['transfer_eth', 'fetch_price', 'swap_tokens']
   wallet_address TEXT,  -- optional: agent's primary wallet
+  on_chain_id TEXT,     -- ERC-8004 identity registry ID
   api_key_hash TEXT NOT NULL,  -- bcrypt hash of the agent's API key
   api_key_prefix TEXT NOT NULL, -- first 8 chars for display (e.g. 'bops_8e4...')
   avatar_url TEXT,

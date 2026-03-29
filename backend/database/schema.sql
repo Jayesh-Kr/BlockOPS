@@ -296,10 +296,14 @@ CREATE TABLE IF NOT EXISTS agents (
   user_id           TEXT NOT NULL,      -- owner of this agent (can be Privy user ID or any string)
   name              TEXT NOT NULL,
   description       TEXT,
+  api_key           TEXT UNIQUE NOT NULL, -- raw key shown once to the creator and used in the frontend UI
+  tools             JSONB NOT NULL DEFAULT '[]'::jsonb, -- workflow tool configuration
+  status            TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'archived')),
   system_prompt     TEXT,
   enabled_tools     TEXT[],             -- array of tool names, e.g. ['transfer_eth', 'fetch_price']
   wallet_address    TEXT,               -- optional: agent's primary wallet
-  api_key_hash      TEXT NOT NULL,      -- bcrypt hash of the full API key
+  on_chain_id       TEXT,               -- ERC-8004 identity registry ID
+  api_key_hash      TEXT NOT NULL,      -- SHA-256 hash of the full API key for backend auth lookup
   api_key_prefix    TEXT NOT NULL,      -- first 12 chars for display (e.g. 'bops_8e4fd7e...')
   avatar_url        TEXT,
   is_public         BOOLEAN DEFAULT FALSE,
@@ -308,7 +312,10 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 
 CREATE INDEX IF NOT EXISTS idx_agents_user_id ON agents(user_id);
+CREATE INDEX IF NOT EXISTS idx_agents_api_key ON agents(api_key);
 CREATE INDEX IF NOT EXISTS idx_agents_api_key_hash ON agents(api_key_hash);
+CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
+CREATE INDEX IF NOT EXISTS idx_agents_created_at ON agents(created_at DESC);
 
 -- RLS: service role only (extend later for user-level access)
 ALTER TABLE agents ENABLE ROW LEVEL SECURITY;
@@ -384,5 +391,3 @@ ALTER TABLE scheduled_transfers      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE scheduled_transfer_logs  ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "service_role_scheduled_transfers"     ON scheduled_transfers     USING (auth.role() = 'service_role');
 CREATE POLICY "service_role_scheduled_transfer_logs" ON scheduled_transfer_logs USING (auth.role() = 'service_role');
-
-

@@ -15,6 +15,7 @@ function normalizeAgent(agent: any): Agent {
     description: agent.description ?? null,
     api_key: agent.api_key ?? agent.apiKey ?? '',
     tools: Array.isArray(agent.tools) ? agent.tools : [],
+    on_chain_id: agent.on_chain_id ?? agent.onChainId ?? null,
     created_at: agent.created_at ?? agent.createdAt,
     updated_at: agent.updated_at ?? agent.updatedAt,
   }
