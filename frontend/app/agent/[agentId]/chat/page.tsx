@@ -847,6 +847,13 @@ function ReminderJobsSheet({
         agentId,
       })
 
+      const cancelledIds = new Set(
+        (response.cancelledIds && response.cancelledIds.length > 0
+          ? response.cancelledIds
+          : [job.id])
+      )
+      setJobs((prev) => prev.filter((item) => !cancelledIds.has(item.id)))
+
       const count = response.cancelledCount || response.cancelledIds?.length || 1
       toast({
         title: count > 1 ? "Reminders cancelled" : "Reminder cancelled",

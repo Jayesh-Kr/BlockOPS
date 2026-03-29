@@ -41,6 +41,17 @@ function normalizeOnlyActive(value, defaultValue = true) {
   return String(value).toLowerCase() !== 'false';
 }
 
+function normalizeBoolean(value, defaultValue = false) {
+  if (value === undefined || value === null || value === '') {
+    return defaultValue;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'y'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n'].includes(normalized)) return false;
+  return defaultValue;
+}
+
 async function fetchReminderCandidates(filters = {}) {
   const {
     ids = [],
@@ -98,7 +109,7 @@ async function cancelReminderById(reminderId) {
   if (supabase) {
     const { error } = await supabase
       .from('scheduled_chat_reminders')
-      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .delete()
       .eq('id', reminderId);
 
     if (error) {
@@ -210,23 +221,24 @@ async function persistReminderDeliveryToConversation(job, message, toolResults) 
     return;
   }
 
-  await supabase
+  const { error } = await supabase
     .from('conversation_messages')
     .insert({
       conversation_id: job.conversation_id,
       role: 'assistant',
       content: message,
       tool_calls: toolResults
-    })
-    .catch((error) => {
-      console.error('[Reminder] Failed to persist reminder message to conversation:', error.message);
     });
+
+  if (error) {
+    console.error('[Reminder] Failed to persist reminder message to conversation:', error.message);
+  }
 }
 
 async function persistReminderLog(jobId, payload) {
   if (!supabase) return;
 
-  await supabase
+  const { error } = await supabase
     .from('scheduled_chat_reminder_logs')
     .insert({
       reminder_id: jobId,
@@ -235,25 +247,27 @@ async function persistReminderLog(jobId, payload) {
       message_text: payload.messageText || null,
       error: payload.error || null,
       tool_results: payload.toolResults || null
-    })
-    .catch((error) => {
-      console.error('[Reminder] Failed to persist reminder log:', error.message);
     });
+
+  if (error) {
+    console.error('[Reminder] Failed to persist reminder log:', error.message);
+  }
 }
 
 async function updateReminderRow(jobId, updatePayload) {
   if (!supabase) return;
 
-  await supabase
+  const { error } = await supabase
     .from('scheduled_chat_reminders')
     .update({
       ...updatePayload,
       updated_at: new Date().toISOString()
     })
-    .eq('id', jobId)
-    .catch((error) => {
-      console.error('[Reminder] Failed to update reminder row:', error.message);
-    });
+    .eq('id', jobId);
+
+  if (error) {
+    console.error('[Reminder] Failed to update reminder row:', error.message);
+  }
 }
 
 async function runReminder(job) {
@@ -496,6 +510,7 @@ async function listReminders(req, res) {
 
     const userId = req.query.userId || req.body?.userId || null;
     const agentId = req.apiKey?.agentId || req.query.agentId || null;
+    const includeInactive = normalizeBoolean(req.query.includeInactive ?? req.body?.includeInactive, false);
 
     let query = supabase
       .from('scheduled_chat_reminders')
@@ -504,6 +519,7 @@ async function listReminders(req, res) {
 
     if (userId) query = query.eq('user_id', userId);
     if (agentId) query = query.eq('agent_id', agentId);
+    if (!includeInactive) query = query.eq('status', 'active');
 
     const { data, error } = await query;
     if (error) throw error;
@@ -513,7 +529,7 @@ async function listReminders(req, res) {
       liveStatus: activeReminderTasks.has(job.id) ? 'running' : (job.status === 'active' ? 'pending_reload' : job.status)
     }));
 
-    return res.json(successResponse({ jobs, total: jobs.length }));
+    return res.json(successResponse({ jobs, total: jobs.length, includeInactive }));
   } catch (error) {
     console.error('[Reminder] listReminders error:', error);
     return res.status(500).json(errorResponse(error.message));
