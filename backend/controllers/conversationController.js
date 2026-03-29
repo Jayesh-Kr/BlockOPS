@@ -630,6 +630,7 @@ async function chat(req, res) {
           conversationId: convId,
           message: truncatedMessage,
           toolResults,
+          filecoinPrivateKey: privateKey || null,
           routingPlan
         });
 

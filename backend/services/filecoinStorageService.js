@@ -1,18 +1,29 @@
 const MIN_UPLOAD_SIZE_BYTES = 127;
+const DEFAULT_PREPARE_BUFFER_BYTES = 4096;
 const PRIVATE_KEY_REGEX = /^0x[a-fA-F0-9]{64}$/;
+const RAW_PRIVATE_KEY_REGEX = /^[a-fA-F0-9]{64}$/;
 
-let synapseClientPromise = null;
+let synapseSdkModulesPromise = null;
 
 function getFilecoinProvider() {
   return 'synapse';
 }
 
-function getWalletPrivateKey() {
-  return String(process.env.FILECOIN_WALLET_PRIVATE_KEY || '').trim();
-}
+function normalizePrivateKey(privateKey) {
+  const trimmed = String(privateKey || '').trim();
+  if (!trimmed) {
+    return '';
+  }
 
-function isFilecoinStorageConfigured() {
-  return PRIVATE_KEY_REGEX.test(getWalletPrivateKey());
+  if (PRIVATE_KEY_REGEX.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (RAW_PRIVATE_KEY_REGEX.test(trimmed)) {
+    return `0x${trimmed}`;
+  }
+
+  return trimmed;
 }
 
 function parseBooleanEnv(value, defaultValue = false) {
@@ -22,6 +33,48 @@ function parseBooleanEnv(value, defaultValue = false) {
 
   const normalized = String(value).trim().toLowerCase();
   return ['1', 'true', 'yes', 'on'].includes(normalized);
+}
+
+function resolveWalletPrivateKey(overridePrivateKey = null) {
+  if (typeof overridePrivateKey === 'string' && overridePrivateKey.trim()) {
+    return normalizePrivateKey(overridePrivateKey);
+  }
+
+  return normalizePrivateKey(process.env.FILECOIN_WALLET_PRIVATE_KEY || '');
+}
+
+function isValidPrivateKey(privateKey) {
+  return PRIVATE_KEY_REGEX.test(privateKey || '');
+}
+
+function isFilecoinStorageConfigured(options = {}) {
+  return isValidPrivateKey(resolveWalletPrivateKey(options.privateKey || null));
+}
+
+function getPrepareBufferBytes() {
+  const value = parseInt(process.env.FILECOIN_PREPARE_BUFFER_BYTES || `${DEFAULT_PREPARE_BUFFER_BYTES}`, 10);
+  if (Number.isNaN(value) || value < 0) {
+    return DEFAULT_PREPARE_BUFFER_BYTES;
+  }
+
+  return value;
+}
+
+function isInsufficientLockupFundsError(errorMessage) {
+  return /InsufficientLockupFunds/i.test(String(errorMessage || ''));
+}
+
+function enrichLockupError(errorMessage) {
+  const text = String(errorMessage || '');
+  const match = text.match(/InsufficientLockupFunds\([^)]*\)\s*\(\s*(0x[a-fA-F0-9]{40})\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/);
+  if (!match) {
+    return text;
+  }
+
+  const minimumRequired = BigInt(match[2]);
+  const available = BigInt(match[3]);
+  const shortfall = minimumRequired > available ? minimumRequired - available : 0n;
+  return `${text}\n\nLockup shortfall (wei): ${shortfall.toString()}`;
 }
 
 function buildPieceUri(pieceCid) {
@@ -58,55 +111,86 @@ function encodePayload(payload, options = {}) {
 }
 
 async function getSynapseClient() {
-  if (!synapseClientPromise) {
-    synapseClientPromise = (async () => {
-      const privateKey = getWalletPrivateKey();
-      if (!PRIVATE_KEY_REGEX.test(privateKey)) {
-        throw new Error('FILECOIN_WALLET_PRIVATE_KEY is missing or invalid (expected 0x-prefixed 32-byte hex key)');
-      }
-
-      const [{ Synapse }, { calibration }, { privateKeyToAccount }] = await Promise.all([
-        import('@filoz/synapse-sdk'),
-        import('@filoz/synapse-core/chains'),
-        import('viem/accounts')
-      ]);
-
-      return Synapse.create({
-        account: privateKeyToAccount(privateKey),
-        source: String(process.env.SYNAPSE_SOURCE || 'blockops-agent-audit'),
-        chain: calibration,
-        withCDN: parseBooleanEnv(process.env.SYNAPSE_WITH_CDN, false)
-      });
-    })();
+  if (!synapseSdkModulesPromise) {
+    synapseSdkModulesPromise = Promise.all([
+      import('@filoz/synapse-sdk'),
+      import('@filoz/synapse-core/chains'),
+      import('viem/accounts')
+    ]);
   }
 
-  return synapseClientPromise;
+  return synapseSdkModulesPromise;
+}
+
+async function createSynapseClient(privateKey) {
+  const [{ Synapse }, { calibration }, { privateKeyToAccount }] = await getSynapseClient();
+
+  return Synapse.create({
+    account: privateKeyToAccount(privateKey),
+    source: String(process.env.SYNAPSE_SOURCE || 'blockops-agent-audit'),
+    chain: calibration,
+    withCDN: parseBooleanEnv(process.env.SYNAPSE_WITH_CDN, false)
+  });
 }
 
 async function archiveJsonToFilecoin(payload, options = {}) {
-  if (!isFilecoinStorageConfigured()) {
+  const walletPrivateKey = resolveWalletPrivateKey(options.privateKey || null);
+
+  if (!isValidPrivateKey(walletPrivateKey)) {
     return {
       status: 'not_configured',
       provider: 'synapse',
-      error: 'FILECOIN_WALLET_PRIVATE_KEY is not configured'
+      error: 'Filecoin signer key missing. Set FILECOIN_WALLET_PRIVATE_KEY or pass options.privateKey'
     };
   }
 
   try {
-    const synapse = await getSynapseClient();
+    const synapse = await createSynapseClient(walletPrivateKey);
     const uploadBytes = encodePayload(payload, options);
+    const prepareBufferBytes = getPrepareBufferBytes();
+    const basePrepareDataSize = BigInt(uploadBytes.byteLength + prepareBufferBytes);
+    const prepareTxHashes = [];
 
     const preparation = await synapse.storage.prepare({
-      dataSize: BigInt(uploadBytes.byteLength)
+      dataSize: basePrepareDataSize
     });
 
     let prepareTxHash = null;
     if (preparation?.transaction) {
       const txResult = await preparation.transaction.execute();
       prepareTxHash = txResult?.hash || null;
+      if (prepareTxHash) {
+        prepareTxHashes.push(prepareTxHash);
+      }
     }
 
-    const uploadResult = await synapse.storage.upload(uploadBytes);
+    let uploadResult;
+    try {
+      uploadResult = await synapse.storage.upload(uploadBytes);
+    } catch (uploadError) {
+      const uploadErrorMessage = uploadError?.message || String(uploadError);
+
+      // Some uploads fail by a tiny lockup margin. Retry once with an additional prepare buffer.
+      if (!isInsufficientLockupFundsError(uploadErrorMessage)) {
+        throw uploadError;
+      }
+
+      const retryPreparation = await synapse.storage.prepare({
+        dataSize: basePrepareDataSize + BigInt(prepareBufferBytes)
+      });
+
+      if (retryPreparation?.transaction) {
+        const retryTx = await retryPreparation.transaction.execute();
+        const retryHash = retryTx?.hash || null;
+        if (retryHash) {
+          prepareTxHash = retryHash;
+          prepareTxHashes.push(retryHash);
+        }
+      }
+
+      uploadResult = await synapse.storage.upload(uploadBytes);
+    }
+
     const pieceCid = uploadResult?.pieceCid || null;
 
     if (!pieceCid) {
@@ -125,16 +209,18 @@ async function archiveJsonToFilecoin(payload, options = {}) {
       cid: pieceCid,
       uri: buildPieceUri(pieceCid),
       prepareTxHash,
+      prepareTxHashes,
       complete: Boolean(uploadResult?.complete),
       copiesStored: Array.isArray(uploadResult?.copies) ? uploadResult.copies.length : 0,
       failedAttempts: Array.isArray(uploadResult?.failedAttempts) ? uploadResult.failedAttempts.length : 0,
       size: uploadResult?.size || uploadBytes.byteLength
     };
   } catch (error) {
+    const errorMessage = error?.message || String(error);
     return {
       status: 'failed',
       provider: 'synapse',
-      error: error?.message || String(error)
+      error: enrichLockupError(errorMessage)
     };
   }
 }

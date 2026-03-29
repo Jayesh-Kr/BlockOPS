@@ -25,7 +25,7 @@ Add these variables in backend env.
 ### Required for Synapse Storage
 
 - FILECOIN_WALLET_PRIVATE_KEY
-  - 0x-prefixed 32-byte private key.
+  - 32-byte hex private key (with or without 0x prefix).
   - Used to sign prepare transaction when deposit/approval is needed.
 - SYNAPSE_SOURCE
   - App identifier written in metadata.
@@ -36,6 +36,10 @@ Add these variables in backend env.
 - SYNAPSE_WITH_CDN
   - true/false flag to enable accelerated retrieval.
   - Default in current implementation: false.
+- FILECOIN_PREPARE_BUFFER_BYTES
+  - Optional extra buffer applied to prepare dataSize.
+  - Helps avoid tiny lockup shortfalls on commit.
+  - Default: 4096.
 
 ### Still Required for Persistence
 

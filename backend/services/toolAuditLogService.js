@@ -262,6 +262,7 @@ async function archiveToolExecutionLogs({
   conversationId,
   message,
   toolResults,
+  filecoinPrivateKey = null,
   routingPlan = null
 }) {
   const toolCalls = Array.isArray(toolResults?.tool_calls) ? toolResults.tool_calls : [];
@@ -314,7 +315,12 @@ async function archiveToolExecutionLogs({
     const filecoin = await archiveJsonToFilecoin(auditPayload, {
       namespace: 'blockops-tool-execution',
       name: `tool-execution-${agentId}-${Date.now()}-${index + 1}`,
-      metadata: { tool: toolName, userId: String(userId) }
+      metadata: { tool: toolName, userId: String(userId) },
+      privateKey:
+        filecoinPrivateKey ||
+        toolCall?.parameters?.privateKey ||
+        toolCall?.parameters?.private_key ||
+        null
     });
 
     if (filecoin?.prepareTxHash) {
