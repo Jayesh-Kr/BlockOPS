@@ -11,6 +11,7 @@ const {
 const { fireEvent } = require('../services/webhookService');
 
 const IN_MEMORY_MESSAGE_LIMIT = 30;
+const DEFAULT_AUDIT_WAIT_MS = 8000;
 const inMemoryConversations = new Map();
 const UUID_V4_LIKE_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -96,6 +97,58 @@ function addInMemoryMessage(conversationId, role, content, toolCalls = null) {
 function getInMemoryMessages(conversationId) {
   const conversation = inMemoryConversations.get(conversationId);
   return conversation?.messages || [];
+}
+
+function getAuditWaitMs() {
+  const parsed = parseInt(process.env.FILECOIN_AUDIT_WAIT_MS || `${DEFAULT_AUDIT_WAIT_MS}`, 10);
+  if (Number.isNaN(parsed) || parsed < 500) {
+    return DEFAULT_AUDIT_WAIT_MS;
+  }
+
+  return Math.min(parsed, 60000);
+}
+
+function createPendingExecutionAudit(toolResults) {
+  const toolCalls = Array.isArray(toolResults?.tool_calls) ? toolResults.tool_calls : [];
+  const results = Array.isArray(toolResults?.results) ? toolResults.results : [];
+  const now = new Date().toISOString();
+
+  const entries = results.map((result, index) => {
+    const toolCall = toolCalls[index] || {};
+    const payload = result?.result || {};
+    const txHash =
+      payload.transactionHash ||
+      payload.txHash ||
+      payload.tx_hash ||
+      payload.hash ||
+      payload.receipt?.transactionHash ||
+      null;
+    const amount = payload.amount || toolCall?.parameters?.amount || null;
+
+    return {
+      id: `pending-${Date.now()}-${index + 1}`,
+      tool: toolCall.tool || result?.tool || `tool_step_${index + 1}`,
+      success: Boolean(result?.success),
+      chain: payload.chain || payload.network || null,
+      timestamp: now,
+      txHash,
+      amount,
+      storageStatus: 'pending',
+      filecoinCid: null,
+      filecoinUri: null,
+      prepareTxHash: null,
+      storageError: 'Filecoin archival in progress',
+      dbError: null
+    };
+  });
+
+  return {
+    totalCount: entries.length,
+    successfulCount: entries.filter((entry) => entry.success).length,
+    filecoinStoredCount: 0,
+    pending: true,
+    entries
+  };
 }
 
 /**
@@ -624,7 +677,7 @@ async function chat(req, res) {
 
     if (toolResults && Array.isArray(toolResults.results) && toolResults.results.length > 0) {
       try {
-        executionAudit = await archiveToolExecutionLogs({
+        const auditPromise = archiveToolExecutionLogs({
           agentId,
           userId,
           conversationId: convId,
@@ -633,6 +686,36 @@ async function chat(req, res) {
           filecoinPrivateKey: privateKey || null,
           routingPlan
         });
+
+        let auditCompletedWithinBudget = false;
+        const auditWaitMs = getAuditWaitMs();
+
+        executionAudit = await Promise.race([
+          auditPromise.then((audit) => {
+            auditCompletedWithinBudget = true;
+            return audit;
+          }),
+          new Promise((resolve) => {
+            setTimeout(() => resolve(null), auditWaitMs);
+          })
+        ]);
+
+        if (!auditCompletedWithinBudget || !executionAudit) {
+          executionAudit = createPendingExecutionAudit(toolResults);
+
+          auditPromise
+            .then((finalAudit) => {
+              if (finalAudit?.totalCount) {
+                console.log('[Chat] Filecoin archival completed asynchronously:', {
+                  totalCount: finalAudit.totalCount,
+                  filecoinStoredCount: finalAudit.filecoinStoredCount
+                });
+              }
+            })
+            .catch((archiveError) => {
+              console.error('[Chat] Async Filecoin archival failed:', archiveError.message);
+            });
+        }
 
         const auditText = formatExecutionAuditForChat(executionAudit);
         if (auditText) {

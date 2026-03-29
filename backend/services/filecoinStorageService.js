@@ -4,9 +4,28 @@ const PRIVATE_KEY_REGEX = /^0x[a-fA-F0-9]{64}$/;
 const RAW_PRIVATE_KEY_REGEX = /^[a-fA-F0-9]{64}$/;
 
 let synapseSdkModulesPromise = null;
+const archiveQueueByWallet = new Map();
 
 function getFilecoinProvider() {
   return 'synapse';
+}
+
+function queueArchiveByWallet(walletPrivateKey, task) {
+  const queueKey = walletPrivateKey.toLowerCase();
+  const previousTask = archiveQueueByWallet.get(queueKey) || Promise.resolve();
+
+  const currentTask = previousTask
+    .catch(() => {})
+    .then(task);
+
+  const cleanupTask = currentTask.finally(() => {
+    if (archiveQueueByWallet.get(queueKey) === cleanupTask) {
+      archiveQueueByWallet.delete(queueKey);
+    }
+  });
+
+  archiveQueueByWallet.set(queueKey, cleanupTask);
+  return currentTask;
 }
 
 function normalizePrivateKey(privateKey) {
@@ -81,6 +100,33 @@ function buildPieceUri(pieceCid) {
   return pieceCid ? `filecoin://piece/${pieceCid}` : null;
 }
 
+function normalizePieceCid(pieceCidValue) {
+  if (!pieceCidValue) {
+    return null;
+  }
+
+  if (typeof pieceCidValue === 'string') {
+    const trimmed = pieceCidValue.trim();
+    return trimmed || null;
+  }
+
+  if (typeof pieceCidValue === 'object') {
+    const slashPathCid = pieceCidValue['/'];
+    if (typeof slashPathCid === 'string' && slashPathCid.trim()) {
+      return slashPathCid.trim();
+    }
+
+    if (typeof pieceCidValue.toString === 'function') {
+      const asString = pieceCidValue.toString();
+      if (typeof asString === 'string' && asString.trim() && asString !== '[object Object]') {
+        return asString.trim();
+      }
+    }
+  }
+
+  return null;
+}
+
 function ensureMinimumUploadSize(bytes) {
   if (!(bytes instanceof Uint8Array)) {
     throw new Error('Expected Uint8Array payload');
@@ -144,85 +190,87 @@ async function archiveJsonToFilecoin(payload, options = {}) {
     };
   }
 
-  try {
-    const synapse = await createSynapseClient(walletPrivateKey);
-    const uploadBytes = encodePayload(payload, options);
-    const prepareBufferBytes = getPrepareBufferBytes();
-    const basePrepareDataSize = BigInt(uploadBytes.byteLength + prepareBufferBytes);
-    const prepareTxHashes = [];
-
-    const preparation = await synapse.storage.prepare({
-      dataSize: basePrepareDataSize
-    });
-
-    let prepareTxHash = null;
-    if (preparation?.transaction) {
-      const txResult = await preparation.transaction.execute();
-      prepareTxHash = txResult?.hash || null;
-      if (prepareTxHash) {
-        prepareTxHashes.push(prepareTxHash);
-      }
-    }
-
-    let uploadResult;
+  return queueArchiveByWallet(walletPrivateKey, async () => {
     try {
-      uploadResult = await synapse.storage.upload(uploadBytes);
-    } catch (uploadError) {
-      const uploadErrorMessage = uploadError?.message || String(uploadError);
+      const synapse = await createSynapseClient(walletPrivateKey);
+      const uploadBytes = encodePayload(payload, options);
+      const prepareBufferBytes = getPrepareBufferBytes();
+      const basePrepareDataSize = BigInt(uploadBytes.byteLength + prepareBufferBytes);
+      const prepareTxHashes = [];
 
-      // Some uploads fail by a tiny lockup margin. Retry once with an additional prepare buffer.
-      if (!isInsufficientLockupFundsError(uploadErrorMessage)) {
-        throw uploadError;
-      }
-
-      const retryPreparation = await synapse.storage.prepare({
-        dataSize: basePrepareDataSize + BigInt(prepareBufferBytes)
+      const preparation = await synapse.storage.prepare({
+        dataSize: basePrepareDataSize
       });
 
-      if (retryPreparation?.transaction) {
-        const retryTx = await retryPreparation.transaction.execute();
-        const retryHash = retryTx?.hash || null;
-        if (retryHash) {
-          prepareTxHash = retryHash;
-          prepareTxHashes.push(retryHash);
+      let prepareTxHash = null;
+      if (preparation?.transaction) {
+        const txResult = await preparation.transaction.execute();
+        prepareTxHash = txResult?.hash || null;
+        if (prepareTxHash) {
+          prepareTxHashes.push(prepareTxHash);
         }
       }
 
-      uploadResult = await synapse.storage.upload(uploadBytes);
-    }
+      let uploadResult;
+      try {
+        uploadResult = await synapse.storage.upload(uploadBytes);
+      } catch (uploadError) {
+        const uploadErrorMessage = uploadError?.message || String(uploadError);
 
-    const pieceCid = uploadResult?.pieceCid || null;
+        // Some uploads fail by a tiny lockup margin. Retry once with an additional prepare buffer.
+        if (!isInsufficientLockupFundsError(uploadErrorMessage)) {
+          throw uploadError;
+        }
 
-    if (!pieceCid) {
+        const retryPreparation = await synapse.storage.prepare({
+          dataSize: basePrepareDataSize + BigInt(prepareBufferBytes)
+        });
+
+        if (retryPreparation?.transaction) {
+          const retryTx = await retryPreparation.transaction.execute();
+          const retryHash = retryTx?.hash || null;
+          if (retryHash) {
+            prepareTxHash = retryHash;
+            prepareTxHashes.push(retryHash);
+          }
+        }
+
+        uploadResult = await synapse.storage.upload(uploadBytes);
+      }
+
+      const pieceCid = normalizePieceCid(uploadResult?.pieceCid || null);
+
+      if (!pieceCid) {
+        return {
+          status: 'failed',
+          provider: 'synapse',
+          error: 'Synapse upload did not return pieceCid'
+        };
+      }
+
+      return {
+        status: 'stored',
+        provider: 'synapse',
+        pieceCid,
+        // Keep cid alias for backward compatibility with current audit writer.
+        cid: pieceCid,
+        uri: buildPieceUri(pieceCid),
+        prepareTxHash,
+        prepareTxHashes,
+        complete: Boolean(uploadResult?.complete),
+        copiesStored: Array.isArray(uploadResult?.copies) ? uploadResult.copies.length : 0,
+        failedAttempts: Array.isArray(uploadResult?.failedAttempts) ? uploadResult.failedAttempts.length : 0,
+        size: uploadResult?.size || uploadBytes.byteLength
+      };
+    } catch (error) {
+      const errorMessage = error?.message || String(error);
       return {
         status: 'failed',
         provider: 'synapse',
-        error: 'Synapse upload did not return pieceCid'
+        error: enrichLockupError(errorMessage)
       };
     }
-
-    return {
-      status: 'stored',
-      provider: 'synapse',
-      pieceCid,
-      // Keep cid alias for backward compatibility with current audit writer.
-      cid: pieceCid,
-      uri: buildPieceUri(pieceCid),
-      prepareTxHash,
-      prepareTxHashes,
-      complete: Boolean(uploadResult?.complete),
-      copiesStored: Array.isArray(uploadResult?.copies) ? uploadResult.copies.length : 0,
-      failedAttempts: Array.isArray(uploadResult?.failedAttempts) ? uploadResult.failedAttempts.length : 0,
-      size: uploadResult?.size || uploadBytes.byteLength
-    };
-  } catch (error) {
-    const errorMessage = error?.message || String(error);
-    return {
-      status: 'failed',
-      provider: 'synapse',
-      error: enrichLockupError(errorMessage)
-    };
-  }
+  });
 }
 
 module.exports = {

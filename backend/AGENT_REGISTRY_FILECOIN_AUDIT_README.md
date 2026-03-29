@@ -40,6 +40,10 @@ Add these variables in backend env.
   - Optional extra buffer applied to prepare dataSize.
   - Helps avoid tiny lockup shortfalls on commit.
   - Default: 4096.
+- FILECOIN_AUDIT_WAIT_MS
+  - Optional max wait time for archival in chat response path.
+  - If archival exceeds this budget, API returns immediately with pending audit status.
+  - Default: 8000.
 
 ### Still Required for Persistence
 
