@@ -18,6 +18,10 @@ const {
   getTxExplorerUrl,
   logTransaction 
 } = require('../utils/helpers');
+const {
+  deriveWalletAddressFromPkpPublicKey,
+  signAndBroadcastTransactionWithPkp
+} = require('../services/litPkpService');
 
 // Initialize AI clients
 let groqClient = null;
@@ -322,6 +326,10 @@ async function executeCommand(req, res) {
       contractAddress, 
       command, 
       privateKey,
+      walletAddress,
+      walletType,
+      pkpPublicKey,
+      pkpTokenId,
       confirmExecution = false,
       decimals = 18
     } = req.body;
@@ -329,8 +337,7 @@ async function executeCommand(req, res) {
     // Validate required fields
     const validationError = validateRequiredFields(req.body, [
       'contractAddress', 
-      'command', 
-      'privateKey'
+      'command'
     ]);
     if (validationError) {
       return res.status(400).json(validationError);
@@ -399,10 +406,37 @@ async function executeCommand(req, res) {
 
     // Step 4: Execute the transaction
     const provider = getProvider();
-    const wallet = getWallet(privateKey, provider);
+    const isPkpWallet = walletType === 'pkp' && !!pkpPublicKey;
+    const hasTraditionalSigner = !!privateKey;
+    let wallet = null;
+    let signerAddress = walletAddress || null;
+
+    if (hasTraditionalSigner) {
+      wallet = getWallet(privateKey, provider);
+      signerAddress = signerAddress || wallet.address;
+    } else if (isPkpWallet) {
+      signerAddress = signerAddress || deriveWalletAddressFromPkpPublicKey(pkpPublicKey);
+    }
+
+    if (!executionPlan.isReadOnly && !wallet && !isPkpWallet) {
+      return res.status(400).json(
+        errorResponse(
+          'Missing signer context',
+          'Provide a traditional privateKey or a PKP wallet context (walletType="pkp" with pkpPublicKey).'
+        )
+      );
+    }
+
+    if (!executionPlan.isReadOnly && !signerAddress) {
+      return res.status(400).json(
+        errorResponse('Unable to resolve signer address for transaction execution')
+      );
+    }
 
     // Check balance
-    const balance = await provider.getBalance(wallet.address);
+    const balance = !executionPlan.isReadOnly
+      ? await provider.getBalance(signerAddress)
+      : 0n;
     if (balance === 0n && !executionPlan.isReadOnly) {
       return res.status(400).json(
         errorResponse('Insufficient balance for gas fees', 
@@ -411,7 +445,7 @@ async function executeCommand(req, res) {
     }
 
     // Create contract instance
-    const contract = getContract(contractAddress, abi, wallet);
+    const contract = getContract(contractAddress, abi, wallet || provider);
     const contractMethod = contract[mapping.functionName];
 
     if (!contractMethod) {
@@ -434,10 +468,19 @@ async function executeCommand(req, res) {
       );
     } else {
       // State-changing transaction
-      
+      let populatedTransaction = null;
+
       // Simulate first with staticCall
       try {
-        await contractMethod.staticCall(...formattedParams);
+        if (wallet) {
+          await contractMethod.staticCall(...formattedParams);
+        } else {
+          populatedTransaction = await contractMethod.populateTransaction(...formattedParams);
+          await provider.call({
+            ...populatedTransaction,
+            from: signerAddress
+          });
+        }
       } catch (simulationError) {
         return res.status(400).json(
           errorResponse('Transaction simulation failed', {
@@ -449,14 +492,25 @@ async function executeCommand(req, res) {
 
       // Estimate gas
       let gasEstimate;
+      let gasLimit;
+      let feeData;
       try {
-        gasEstimate = await contractMethod.estimateGas(...formattedParams);
-        const gasBuffer = gasEstimate * 12n / 10n; // 20% buffer
+        if (wallet) {
+          gasEstimate = await contractMethod.estimateGas(...formattedParams);
+        } else {
+          populatedTransaction = populatedTransaction || await contractMethod.populateTransaction(...formattedParams);
+          gasEstimate = await provider.estimateGas({
+            ...populatedTransaction,
+            from: signerAddress
+          });
+        }
+        gasLimit = gasEstimate * 12n / 10n;
         
         // Check if balance is sufficient for gas
-        const feeData = await provider.getFeeData();
-        if (feeData.gasPrice) {
-          const estimatedCost = gasBuffer * feeData.gasPrice;
+        feeData = await provider.getFeeData();
+        const effectiveGasPrice = feeData.maxFeePerGas || feeData.gasPrice;
+        if (effectiveGasPrice) {
+          const estimatedCost = gasLimit * effectiveGasPrice;
           if (balance < estimatedCost) {
             return res.status(400).json(
               errorResponse('Insufficient balance for gas fees', {
@@ -470,26 +524,57 @@ async function executeCommand(req, res) {
         console.warn('Gas estimation failed:', estimateError.message);
       }
 
-      // Send transaction
-      const tx = gasEstimate
-        ? await contractMethod(...formattedParams, { gasLimit: gasEstimate * 12n / 10n })
-        : await contractMethod(...formattedParams);
+      if (wallet) {
+        // Send transaction with the legacy traditional key path
+        const tx = gasLimit
+          ? await contractMethod(...formattedParams, { gasLimit })
+          : await contractMethod(...formattedParams);
 
-      console.log('Transaction sent:', tx.hash);
+        console.log('Transaction sent:', tx.hash);
 
-      // Wait for confirmation
-      const receipt = await tx.wait();
-      console.log('Transaction confirmed in block:', receipt.blockNumber);
+        // Wait for confirmation
+        const receipt = await tx.wait();
+        console.log('Transaction confirmed in block:', receipt.blockNumber);
+
+        return res.json(
+          successResponse({
+            executionPlan,
+            transaction: {
+              hash: tx.hash,
+              blockNumber: receipt.blockNumber,
+              gasUsed: receipt.gasUsed.toString(),
+              status: receipt.status === 1 ? 'success' : 'failed',
+              explorerUrl: getTxExplorerUrl(tx.hash)
+            }
+          }, 'Transaction executed successfully')
+        );
+      }
+
+      populatedTransaction = populatedTransaction || await contractMethod.populateTransaction(...formattedParams);
+      const pkpTransaction = await signAndBroadcastTransactionWithPkp({
+        pkpPublicKey,
+        transaction: {
+          to: populatedTransaction.to || contractAddress,
+          data: populatedTransaction.data || null,
+          value: populatedTransaction.value ? populatedTransaction.value.toString() : '0',
+          gas: gasLimit ? gasLimit.toString() : null,
+          maxFeePerGas: feeData?.maxFeePerGas ? feeData.maxFeePerGas.toString() : feeData?.gasPrice ? feeData.gasPrice.toString() : null,
+          maxPriorityFeePerGas: feeData?.maxPriorityFeePerGas ? feeData.maxPriorityFeePerGas.toString() : null,
+          nonce: await provider.getTransactionCount(signerAddress, 'pending')
+        }
+      });
 
       return res.json(
         successResponse({
           executionPlan,
           transaction: {
-            hash: tx.hash,
-            blockNumber: receipt.blockNumber,
-            gasUsed: receipt.gasUsed.toString(),
-            status: receipt.status === 1 ? 'success' : 'failed',
-            explorerUrl: getTxExplorerUrl(tx.hash)
+            hash: pkpTransaction.hash,
+            blockNumber: pkpTransaction.blockNumber,
+            gasUsed: pkpTransaction.gasUsed,
+            status: pkpTransaction.status,
+            explorerUrl: pkpTransaction.explorerUrl,
+            walletType: 'pkp',
+            pkpTokenId: pkpTokenId || null
           }
         }, 'Transaction executed successfully')
       );

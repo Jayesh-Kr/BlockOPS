@@ -26,6 +26,7 @@ import { sendChatWithMemory } from "@/lib/backend"
 import type { Agent } from "@/lib/supabase"
 import { useWallets } from "@privy-io/react-auth"
 import { decryptStoredPrivateKey } from "@/lib/lit-private-key"
+import { hasStoredPkpWallet, signTransactionWithPkp } from "@/lib/lit-pkp"
 import { BrowserProvider } from "ethers"
 
 const DEFAULT_EMAIL_RECIPIENT_KEY = "blockops.defaultEmailRecipient"
@@ -729,6 +730,27 @@ export default function AgentChatPage() {
     }
   }
 
+  const handlePkpTransaction = async (txData: any): Promise<{ hash: string; explorerUrl: string }> => {
+    if (!hasStoredPkpWallet(dbUser)) {
+      throw new Error("No PKP wallet is configured for this account.")
+    }
+
+    const signed = await signTransactionWithPkp({
+      pkpPublicKey: dbUser.pkp_public_key,
+      pkpTokenId: dbUser.pkp_token_id,
+      transaction: {
+        to: txData.transaction?.to,
+        data: txData.transaction?.data || null,
+        value: txData.transaction?.value ? String(txData.transaction.value) : null,
+      },
+    })
+
+    return {
+      hash: signed.hash,
+      explorerUrl: signed.explorerUrl,
+    }
+  }
+
   useEffect(() => {
     const loadAgent = async () => {
       if (!agentId) { router.push("/my-agents"); return }
@@ -777,7 +799,7 @@ export default function AgentChatPage() {
 
     try {
       let resolvedPrivateKey: string | undefined
-      if (dbUser?.private_key) {
+      if (dbUser?.wallet_type !== "pkp" && dbUser?.private_key) {
         try {
           resolvedPrivateKey = (await decryptStoredPrivateKey(dbUser.private_key)) || undefined
         } catch (error: any) {
@@ -798,6 +820,9 @@ export default function AgentChatPage() {
         conversationId: conversationId,
         systemPrompt: `You are a helpful AI assistant for blockchain operations. The agent has these tools: ${agent.tools?.map((t) => t.tool).join(", ")}`,
         walletAddress: effectiveWalletAddress,
+        walletType: dbUser?.wallet_type || undefined,
+        pkpPublicKey: dbUser?.pkp_public_key || undefined,
+        pkpTokenId: dbUser?.pkp_token_id || undefined,
         privateKey: resolvedPrivateKey,
         defaultEmailTo: effectiveDefaultEmailTo,
         userEmail: user?.email?.address || undefined,
@@ -833,6 +858,28 @@ export default function AgentChatPage() {
               finalMessage += `\n\n❌ Transaction failed: ${error.message}`
               toast({
                 title: "Transaction Failed",
+                description: error.message,
+                variant: "destructive",
+              })
+            }
+          } else if (result.success && result.result?.requiresSigning && result.result?.transaction && hasStoredPkpWallet(dbUser)) {
+            try {
+              toast({
+                title: "PKP Signing",
+                description: "Signing the prepared transaction with your Lit PKP wallet...",
+              })
+
+              const signedTx = await handlePkpTransaction(result.result)
+              finalMessage += `\n\n✅ PKP transaction confirmed!\nTransaction Hash: [${signedTx.hash.slice(0, 10)}...${signedTx.hash.slice(-8)}](${signedTx.explorerUrl})`
+
+              toast({
+                title: "Success",
+                description: "Transaction confirmed with your PKP wallet",
+              })
+            } catch (error: any) {
+              finalMessage += `\n\n❌ PKP transaction failed: ${error.message}`
+              toast({
+                title: "PKP Transaction Failed",
                 description: error.message,
                 variant: "destructive",
               })

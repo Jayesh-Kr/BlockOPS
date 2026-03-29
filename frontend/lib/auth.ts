@@ -2,8 +2,8 @@
 
 import { usePrivy, useWallets } from '@privy-io/react-auth'
 import { useEffect, useState } from 'react'
-import { supabase, type User } from './supabase'
-import { hasStoredSigningKey } from './lit-private-key'
+import { createCompatibleUser, fetchCompatibleUser, type User } from './supabase'
+import { hasConfiguredAgentWallet } from './lit-pkp'
 
 export function useAuth() {
   const { ready, authenticated, user, login, logout } = usePrivy()
@@ -12,6 +12,7 @@ export function useAuth() {
   const [loading, setLoading] = useState(true)
   const [showPrivateKeySetup, setShowPrivateKeySetup] = useState(false)
   const [hasCheckedPrivateKey, setHasCheckedPrivateKey] = useState(false)
+  const [pkpSchemaReady, setPkpSchemaReady] = useState(true)
 
   // Check if user logged in via wallet
   const isWalletLogin = authenticated && wallets && wallets.length > 0
@@ -27,6 +28,7 @@ export function useAuth() {
       setLoading(false)
       // Reset the check when user logs out
       setHasCheckedPrivateKey(false)
+      setPkpSchemaReady(true)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, authenticated, user])
@@ -39,68 +41,26 @@ export function useAuth() {
 
     setLoading(true)
     try {
-      // Check if user exists
-      const { data: existingUser, error: fetchError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', user.id)
-        .single()
-
-      if (fetchError) {
-        // PGRST116 = "not found" (this is OK, we'll create the user)
-        if (fetchError.code === 'PGRST116') {
-          // User doesn't exist, continue to create
-        } else {
-          // Other error - log full details with proper serialization
-          console.error('Error fetching user:', JSON.stringify(fetchError, null, 2))
-          console.error('Error details:', {
-            message: fetchError.message,
-            code: fetchError.code,
-            details: fetchError.details,
-            hint: fetchError.hint,
-            userId: user.id
-          })
-          setLoading(false)
-          return
-        }
-      }
+      const { user: existingUser, pkpSchemaReady: schemaReady } = await fetchCompatibleUser(user.id)
+      setPkpSchemaReady(schemaReady)
 
       if (existingUser) {
         setDbUser(existingUser)
         
         // Check if user needs to set up private key (only once per session)
-        if (!hasStoredSigningKey(existingUser.private_key) && !hasCheckedPrivateKey) {
+        if (!hasConfiguredAgentWallet(existingUser) && !hasCheckedPrivateKey) {
           setShowPrivateKeySetup(true)
           setHasCheckedPrivateKey(true)
         }
       } else {
         // User doesn't exist, create new user
-        const { data: newUser, error: createError } = await supabase
-          .from('users')
-          .insert({
-            id: user.id,
-            private_key: null,
-            wallet_address: null,
-          })
-          .select()
-          .single()
+        const createdUserResponse = await createCompatibleUser(user.id)
+        setPkpSchemaReady(createdUserResponse.pkpSchemaReady)
+        setDbUser(createdUserResponse.user)
 
-        if (createError) {
-          console.error('Error creating user:', createError)
-          console.error('Create error details:', {
-            message: createError.message,
-            code: createError.code,
-            details: createError.details,
-            hint: createError.hint,
-            userId: user.id
-          })
-        } else {
-          setDbUser(newUser)
-          
-          // Show private key setup modal for new users
-          setShowPrivateKeySetup(true)
-          setHasCheckedPrivateKey(true)
-        }
+        // Show private key setup modal for new users
+        setShowPrivateKeySetup(true)
+        setHasCheckedPrivateKey(true)
       }
     } catch (error) {
       console.error('Error syncing user:', error)
@@ -131,5 +91,6 @@ export function useAuth() {
     privyWalletAddress,
     showPrivateKeySetup,
     setShowPrivateKeySetup,
+    pkpSchemaReady,
   }
 }

@@ -1,5 +1,6 @@
 import { ethers } from 'ethers'
-import { supabase } from './supabase'
+import { updateCompatibleUserWallet } from './supabase'
+import { encryptPrivateKeyForStorage, normalizePrivateKey } from './lit-private-key'
 
 /**
  * Create a new EVM wallet
@@ -61,17 +62,16 @@ export async function saveWalletToUser(
   walletAddress: string,
   privateKey: string
 ): Promise<void> {
-  const { error } = await supabase
-    .from('users')
-    .update({
-      wallet_address: walletAddress,
-      private_key: privateKey,
-    })
-    .eq('id', userId)
+  const normalizedPrivateKey = normalizePrivateKey(privateKey)
+  const litEncryptedPayload = await encryptPrivateKeyForStorage(normalizedPrivateKey)
 
-  if (error) {
-    throw new Error(`Failed to save wallet: ${error.message}`)
-  }
+  await updateCompatibleUserWallet(userId, {
+    wallet_address: walletAddress,
+    private_key: litEncryptedPayload,
+    wallet_type: 'traditional',
+    pkp_public_key: null,
+    pkp_token_id: null,
+  })
 }
 
 /**
@@ -79,17 +79,13 @@ export async function saveWalletToUser(
  * @param userId - The user ID
  */
 export async function removeWalletFromUser(userId: string): Promise<void> {
-  const { error } = await supabase
-    .from('users')
-    .update({
-      wallet_address: null,
-      private_key: null,
-    })
-    .eq('id', userId)
-
-  if (error) {
-    throw new Error(`Failed to remove wallet: ${error.message}`)
-  }
+  await updateCompatibleUserWallet(userId, {
+    wallet_address: null,
+    private_key: null,
+    wallet_type: null,
+    pkp_public_key: null,
+    pkp_token_id: null,
+  })
 }
 
 /**
@@ -126,4 +122,3 @@ export async function getTokenBalances(address: string): Promise<{
     }
   }
 }
-

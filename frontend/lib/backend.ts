@@ -27,6 +27,9 @@ export interface ConversationChatRequest {
   conversationId?: string
   systemPrompt?: string
   walletAddress?: string
+  walletType?: 'traditional' | 'pkp'
+  pkpPublicKey?: string
+  pkpTokenId?: string
   privateKey?: string
   defaultEmailTo?: string
   userEmail?: string

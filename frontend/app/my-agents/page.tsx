@@ -60,7 +60,7 @@ import {
 
 export default function MyAgents() {
   const router = useRouter()
-  const { ready, authenticated, user, logout, loading: authLoading, isWalletLogin, showPrivateKeySetup, setShowPrivateKeySetup, syncUser } = useAuth()
+  const { ready, authenticated, user, logout, loading: authLoading, isWalletLogin, showPrivateKeySetup, setShowPrivateKeySetup, syncUser, pkpSchemaReady } = useAuth()
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -515,10 +515,10 @@ console.log(data);`}
             onOpenChange={setShowPrivateKeySetup}
             userId={user.id}
             onComplete={syncUser}
+            pkpSchemaReady={pkpSchemaReady}
           />
         )}
       </main>
     </TooltipProvider>
   )
 }
-

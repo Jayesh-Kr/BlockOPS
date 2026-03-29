@@ -164,6 +164,9 @@ async function chat(req, res) {
       conversationId,
       systemPrompt,
       walletAddress,
+      walletType,
+      pkpPublicKey,
+      pkpTokenId,
       privateKey,
       enabledTools,
       defaultEmailTo,
@@ -532,6 +535,14 @@ async function chat(req, res) {
       console.log('[Chat] Executing tools:', tools.map(t => `${t.tool}${t.next_tool ? ` → ${t.next_tool}` : ''}`).join(', '));
       
       try {
+        const preferDirectExecution =
+          walletType === 'pkp' &&
+          routingPlan.execution_plan?.steps?.some(step => step.tool === 'transfer');
+
+        if (preferDirectExecution) {
+          throw new Error('PKP transfer flow uses direct execution');
+        }
+
         // Build context summary from recent messages for the agent
         const recentMessages = messages.slice(-10);
         
@@ -631,6 +642,9 @@ async function chat(req, res) {
             truncatedMessage,
             {
               walletAddress: walletAddress || null,
+              walletType: walletType || null,
+              pkpPublicKey: pkpPublicKey || null,
+              pkpTokenId: pkpTokenId || null,
               privateKey: privateKey || null,
               defaultEmailTo: defaultEmailTo || userEmail || null,
               userEmail: userEmail || null,

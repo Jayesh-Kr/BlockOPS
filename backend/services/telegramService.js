@@ -37,7 +37,7 @@ const TG_API = BOT_TOKEN ? `https://api.telegram.org/bot${BOT_TOKEN}` : null;
 const telegramConversationSessions = new Map();
 
 const LIT_PRIVATE_KEY_PREFIX = 'lit:v1:';
-const LIT_PROVIDER = 'lit-chipotle';
+const LIT_PROVIDERS = ['lit-chipotle', 'lit-naga-test'];
 const DEFAULT_LIT_API_BASE_URL = 'https://api.dev.litprotocol.com/core/v1';
 const decryptedKeyCache = new Map();
 const DECRYPT_ACTION_CODE = `
@@ -106,6 +106,15 @@ function deriveAddressFromPrivateKey(privateKey) {
   }
 }
 
+function deriveAddressFromPkpPublicKey(pkpPublicKey) {
+  try {
+    if (!pkpPublicKey || typeof pkpPublicKey !== 'string') return null;
+    return ethers.computeAddress(pkpPublicKey);
+  } catch (_) {
+    return null;
+  }
+}
+
 function parseLitStoredPrivateKey(storedPrivateKey) {
   if (!isLitStoredPrivateKey(storedPrivateKey)) {
     throw new Error('Not a Lit-managed private key payload');
@@ -123,7 +132,7 @@ function parseLitStoredPrivateKey(storedPrivateKey) {
     !parsed ||
     typeof parsed !== 'object' ||
     parsed.version !== 1 ||
-    parsed.provider !== LIT_PROVIDER ||
+    !LIT_PROVIDERS.includes(parsed.provider) ||
     typeof parsed.pkpId !== 'string' ||
     typeof parsed.ciphertext !== 'string'
   ) {
@@ -262,23 +271,49 @@ async function decryptStoredPrivateKey(storedPrivateKey) {
 async function getTelegramWalletContext(preferredWalletAddress = null, linkedUserId = null) {
   const preferredAddress = normalizeAddress(preferredWalletAddress);
   if (!supabase || !linkedUserId) {
-    return { walletAddress: preferredAddress, privateKey: null };
+    return {
+      walletAddress: preferredAddress,
+      walletType: null,
+      privateKey: null,
+      pkpPublicKey: null,
+      pkpTokenId: null
+    };
   }
 
   const { data: userRecord, error } = await supabase
     .from('users')
-    .select('private_key, wallet_address')
+    .select('private_key, wallet_address, wallet_type, pkp_public_key, pkp_token_id')
     .eq('id', String(linkedUserId))
     .maybeSingle();
 
   if (error) {
     console.error('[Telegram] Failed to load linked user signing context:', error.message || error);
-    return { walletAddress: preferredAddress, privateKey: null };
+    return {
+      walletAddress: preferredAddress,
+      walletType: null,
+      privateKey: null,
+      pkpPublicKey: null,
+      pkpTokenId: null
+    };
   }
 
+  const walletType =
+    userRecord?.wallet_type === 'pkp'
+      ? 'pkp'
+      : userRecord?.wallet_type === 'traditional'
+        ? 'traditional'
+        : null;
+  const pkpPublicKey =
+    walletType === 'pkp' && typeof userRecord?.pkp_public_key === 'string'
+      ? userRecord.pkp_public_key
+      : null;
+  const pkpTokenId =
+    walletType === 'pkp' && typeof userRecord?.pkp_token_id === 'string'
+      ? userRecord.pkp_token_id
+      : null;
   let privateKey = null;
   const storedPrivateKey = typeof userRecord?.private_key === 'string' ? userRecord.private_key : null;
-  if (storedPrivateKey) {
+  if (walletType !== 'pkp' && storedPrivateKey) {
     try {
       privateKey = await decryptStoredPrivateKey(storedPrivateKey);
     } catch (err) {
@@ -288,8 +323,9 @@ async function getTelegramWalletContext(preferredWalletAddress = null, linkedUse
 
   const userWalletAddress = normalizeAddress(userRecord?.wallet_address || null);
   const derivedAddress = deriveAddressFromPrivateKey(privateKey);
+  const pkpDerivedAddress = normalizeAddress(deriveAddressFromPkpPublicKey(pkpPublicKey));
 
-  let walletAddress = userWalletAddress || derivedAddress || preferredAddress || null;
+  let walletAddress = userWalletAddress || pkpDerivedAddress || derivedAddress || preferredAddress || null;
 
   // Never pass a signer key when it does not map to the active wallet context.
   if (privateKey && walletAddress && derivedAddress && walletAddress.toLowerCase() !== derivedAddress.toLowerCase()) {
@@ -297,7 +333,13 @@ async function getTelegramWalletContext(preferredWalletAddress = null, linkedUse
     privateKey = null;
   }
 
-  return { walletAddress, privateKey };
+  return {
+    walletAddress,
+    walletType,
+    privateKey,
+    pkpPublicKey,
+    pkpTokenId
+  };
 }
 
 // Escape characters that break Telegram's legacy Markdown parser
@@ -728,6 +770,9 @@ async function handleFreeText(chatId, text, user) {
       systemPrompt: agentConfig?.systemPrompt,       // null = use default
       enabledTools: agentConfig?.enabledTools,       // null = enable all
       walletAddress: telegramWalletContext.walletAddress, // linked user wallet context (fallback: linked agent wallet)
+      walletType: telegramWalletContext.walletType,
+      pkpPublicKey: telegramWalletContext.pkpPublicKey,
+      pkpTokenId: telegramWalletContext.pkpTokenId,
       privateKey: telegramWalletContext.privateKey        // linked website user's private key when available
     }, {
       headers: { 'Content-Type': 'application/json', 'x-api-key': MASTER_KEY },

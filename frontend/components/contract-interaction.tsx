@@ -13,6 +13,7 @@ import { toast } from "@/components/ui/use-toast"
 import { ethers } from "ethers"
 import { useAuth } from "@/lib/auth"
 import { decryptStoredPrivateKey, hasStoredSigningKey } from "@/lib/lit-private-key"
+import { hasConfiguredAgentWallet, hasStoredPkpWallet, signTransactionWithPkp } from "@/lib/lit-pkp"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -252,6 +253,30 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
     })
   }
 
+  const resolveAgentSigningContext = async () => {
+    if (!dbUser) {
+      return null
+    }
+
+    if (hasStoredPkpWallet(dbUser)) {
+      return {
+        walletType: "pkp" as const,
+        pkpPublicKey: dbUser.pkp_public_key,
+        pkpTokenId: dbUser.pkp_token_id,
+      }
+    }
+
+    const decryptedPrivateKey = await decryptStoredPrivateKey(dbUser.private_key)
+    if (!decryptedPrivateKey) {
+      return null
+    }
+
+    return {
+      walletType: "traditional" as const,
+      privateKey: decryptedPrivateKey,
+    }
+  }
+
   // Helper function to convert parameter values based on type
   const convertParamValue = (value: string, type: string): any => {
     if (!value || value.trim() === "") return value
@@ -361,7 +386,9 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
 
   const executeWriteFunction = async (func: ContractFunction) => {
     // Check if user has either agent wallet or Privy wallet
-    const hasAgentWallet = hasStoredSigningKey(dbUser?.private_key)
+    const hasTraditionalAgentWallet = hasStoredSigningKey(dbUser?.private_key)
+    const hasPkpAgentWallet = hasStoredPkpWallet(dbUser)
+    const hasAgentWallet = hasTraditionalAgentWallet || hasPkpAgentWallet
     const hasPrivyWallet = isWalletLogin && privyWalletAddress
     
     if (!contractABI || (!hasAgentWallet && !hasPrivyWallet)) {
@@ -381,7 +408,7 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
       
       let contract: ethers.Contract
       
-      if (hasAgentWallet) {
+      if (hasTraditionalAgentWallet) {
         const decryptedPrivateKey = await decryptStoredPrivateKey(dbUser?.private_key)
         if (!decryptedPrivateKey) {
           throw new Error("No valid agent wallet key found. Please set up your wallet again.")
@@ -389,6 +416,62 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
 
         const wallet = new ethers.Wallet(decryptedPrivateKey, provider)
         contract = new ethers.Contract(contractAddress, contractABI, wallet)
+      } else if (hasPkpAgentWallet && dbUser?.wallet_address && dbUser?.pkp_public_key) {
+        const rawParams = functionParams[func.name] || []
+        const params = rawParams.map((value, index) => 
+          convertParamValue(value, func.inputs[index]?.type || 'string')
+        )
+        const functionSignature = `${func.name}(${func.inputs.map((input) => input.type).join(",")})`
+        const contractInterface = new ethers.Interface(contractABI)
+        const data = contractInterface.encodeFunctionData(functionSignature, params)
+        const gasEstimate = await provider.estimateGas({
+          from: dbUser.wallet_address,
+          to: contractAddress,
+          data,
+        })
+        const gasLimit = (gasEstimate * BigInt(12)) / BigInt(10)
+        const feeData = await provider.getFeeData()
+        const nonce = await provider.getTransactionCount(dbUser.wallet_address, "pending")
+
+        console.log("Executing write with PKP:", func.name, params)
+
+        toast({
+          title: "Transaction Sent",
+          description: "Broadcasting with your Lit PKP signer...",
+        })
+
+        const pkpResult = await signTransactionWithPkp({
+          pkpPublicKey: dbUser.pkp_public_key,
+          pkpTokenId: dbUser.pkp_token_id,
+          transaction: {
+            to: contractAddress,
+            data,
+            gas: gasLimit.toString(),
+            maxFeePerGas: feeData.maxFeePerGas?.toString() ?? feeData.gasPrice?.toString() ?? null,
+            maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.toString() ?? null,
+            nonce,
+          },
+        })
+
+        setFunctionResults((prev) => ({
+          ...prev,
+          [func.name]: { 
+            success: true, 
+            result: pkpResult.hash,
+            txHash: pkpResult.hash 
+          },
+        }))
+
+        toast({
+          title: "Transaction Confirmed",
+          description: `${func.name} executed successfully with your PKP wallet.`,
+        })
+
+        if (onInteraction) {
+          onInteraction(contractAddress, func.name, params)
+        }
+
+        return
       } else if (hasPrivyWallet && window.ethereum) {
         try {
           const browserProvider = new ethers.BrowserProvider(window.ethereum)
@@ -464,13 +547,13 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
       const isExecutionCommand = executionKeywords.test(userMessage) && !userMessage.trim().endsWith('?')
 
       if (isExecutionCommand) {
-        // --- Execution flow (existing) - requires wallet ---
-        const privateKey = await decryptStoredPrivateKey(dbUser?.private_key)
-        
-        if (!privateKey) {
+        // --- Execution flow - requires the stored agent wallet (traditional or PKP) ---
+        const signingContext = await resolveAgentSigningContext()
+
+        if (!signingContext) {
           setChatMessages(prev => [...prev, { 
             role: 'assistant', 
-            content: 'Please connect your wallet to execute contract functions. You can still ask questions about the contract without a wallet!' 
+            content: 'Please set up your agent wallet to execute contract functions. You can still ask questions about the contract without a signer.' 
           }])
           setIsChatLoading(false)
           return
@@ -479,7 +562,7 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
         const planResponse = await executeNaturalLanguageCommand(
           contractAddress,
           userMessage,
-          privateKey,
+          signingContext,
           false
         )
 
@@ -558,11 +641,11 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
     setChatMessages(prev => [...prev, { role: 'user', content: 'yes, execute' }])
 
     try {
-      const privateKey = await decryptStoredPrivateKey(dbUser?.private_key)
-      if (!privateKey) {
+      const signingContext = await resolveAgentSigningContext()
+      if (!signingContext) {
         setChatMessages(prev => [...prev, {
           role: 'assistant',
-          content: 'No valid signing key found. Please set up your wallet again before execution.',
+          content: 'No valid signer found. Please set up your wallet again before execution.',
         }])
         return
       }
@@ -571,7 +654,7 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
       const execResponse = await executeNaturalLanguageCommand(
         contractAddress,
         `Execute ${executionPlan.functionName}`, // Command doesn't matter now, backend uses plan
-        privateKey,
+        signingContext,
         true // Confirm execution
       )
 
@@ -614,7 +697,7 @@ export function ContractInteraction({ onInteraction }: ContractInteractionProps)
   const renderFunctionCard = (func: ContractFunction, isWrite: boolean) => {
     const result = functionResults[func.name]
     const isExecuting = executingFunction === func.name
-    const hasWallet = hasStoredSigningKey(dbUser?.private_key) || (isWalletLogin && privyWalletAddress)
+    const hasWallet = hasConfiguredAgentWallet(dbUser) || (isWalletLogin && privyWalletAddress)
 
     return (
       <AccordionItem key={func.name} value={func.name} className="border-b last:border-b-0">

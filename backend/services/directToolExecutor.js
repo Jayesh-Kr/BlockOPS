@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { PORT } = require('../config/constants');
+const { signAndBroadcastTransactionWithPkp } = require('./litPkpService');
 
 const BASE_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
 
@@ -723,6 +724,10 @@ async function executeToolStep(step, fallbackMessage, executionContext = {}) {
     mapping.mapped.fromAddress &&
     mapping.mapped.toAddress &&
     mapping.mapped.amount;
+  const canSignTransferWithPkp =
+    canPrepareTransfer &&
+    executionContext.walletType === 'pkp' &&
+    !!executionContext.pkpPublicKey;
 
   if (mapping.missing.length > 0) {
     const missingPrivateKeyOnly =
@@ -774,13 +779,49 @@ async function executeToolStep(step, fallbackMessage, executionContext = {}) {
         timeout: 30000
       });
 
+      const prepared = prepareResponse.data || {};
+
+      if (canSignTransferWithPkp) {
+        const signedTransaction = await signAndBroadcastTransactionWithPkp({
+          pkpPublicKey: executionContext.pkpPublicKey,
+          transaction: {
+            to: prepared.transaction?.to || mapping.mapped.toAddress,
+            data: prepared.transaction?.data || null,
+            value: prepared.transaction?.value || null
+          }
+        });
+
+        return {
+          tool_call: { tool, parameters: mapping.mapped },
+          result: {
+            success: true,
+            tool,
+            result: {
+              type: prepared.type || (mapping.mapped.tokenId !== undefined ? 'erc20' : 'native'),
+              transactionHash: signedTransaction.hash,
+              txHash: signedTransaction.hash,
+              from: mapping.mapped.fromAddress,
+              to: mapping.mapped.toAddress,
+              amount: mapping.mapped.amount,
+              tokenId: mapping.mapped.tokenId,
+              blockNumber: signedTransaction.blockNumber,
+              gasUsed: signedTransaction.gasUsed,
+              status: signedTransaction.status,
+              explorerUrl: signedTransaction.explorerUrl,
+              walletType: 'pkp',
+              signer: 'lit-pkp'
+            }
+          }
+        };
+      }
+
       return {
         tool_call: { tool, parameters: mapping.mapped },
         result: {
           success: true,
           tool,
           result: {
-            ...(prepareResponse.data || {}),
+            ...prepared,
             prepared: true,
             requiresSigning: true
           }
@@ -1112,6 +1153,9 @@ function formatToolResponse(toolResults) {
           const to = details.toAddress || payload.transaction?.to || 'unknown';
           const amount = details.amount || 'unknown';
           return `Transfer prepared for wallet signing: ${amount} ETH to ${to}. Please sign this transaction in your wallet/Lit flow.`;
+        }
+        if (payload.walletType === 'pkp') {
+          return `Transfer completed via Lit PKP. Tx: ${payload.transactionHash || payload.txHash || 'unknown'}.`;
         }
         return `Transfer completed. Tx: ${payload.transactionHash || 'unknown'}.`;
       }
