@@ -198,6 +198,7 @@ export default function AgentChatPage() {
   const [conversationId, setConversationId] = useState<string | undefined>(undefined)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const sendInFlightRef = useRef(false)
 
   // Function to handle MetaMask transaction signing
   const handleMetaMaskTransaction = async (txData: any): Promise<string> => {
@@ -281,7 +282,7 @@ export default function AgentChatPage() {
   }, [loadingAgent])
 
   const handleSend = async () => {
-    if (!input.trim() || isLoading || !agent || !dbUser?.id) return
+    if (!input.trim() || isLoading || sendInFlightRef.current || !agent || !dbUser?.id) return
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -293,6 +294,7 @@ export default function AgentChatPage() {
     const userQuery = input.trim()
     setInput("")
     setIsLoading(true)
+    sendInFlightRef.current = true
 
     try {
       let resolvedPrivateKey: string | undefined
@@ -380,6 +382,7 @@ export default function AgentChatPage() {
       toast({ title: "Error", description: error.message || "Failed to chat with agent", variant: "destructive" })
     } finally {
       setIsLoading(false)
+      sendInFlightRef.current = false
     }
   }
 

@@ -23,6 +23,12 @@ const apiKeyAuth = require('../middleware/apiKeyAuth');
 // Agent CRUD
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * GET /agents/:id/manifest
+ * Get public agent manifest for ERC-8004
+ */
+router.get('/:id/manifest', getAgentManifest);
+
 // All agent management routes should be protected by the master API key
 router.use(apiKeyAuth());
 
@@ -77,12 +83,6 @@ router.post('/:id/regenerate-key', regenerateApiKey);
  * Response: { success, onChainId, transactionHash }
  */
 router.post('/:id/register-on-chain', registerAgentOnChain);
-
-/**
- * GET /agents/:id/manifest
- * Get public agent manifest for ERC-8004
- */
-router.get('/:id/manifest', getAgentManifest);
 
 /**
  * DELETE /agents/:id?userId=xxx

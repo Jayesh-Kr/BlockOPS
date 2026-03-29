@@ -461,6 +461,7 @@ async function chat(req, res) {
       
       // Use the new BlockOps Agent Runtime (ERC-8004 PEVD Loop)
       const runtime = new BlockOpsAgentRuntime(agentId, { privateKey });
+      let primaryRuntimeResult = null;
       
       try {
         // Build context summary from recent messages for the agent
@@ -517,6 +518,7 @@ async function chat(req, res) {
             return agentData;
           }
         );
+        primaryRuntimeResult = runtimeResult;
 
         aiResponse = runtimeResult.agent_response;
         toolResults = {
@@ -566,58 +568,80 @@ async function chat(req, res) {
       } catch (agentError) {
         console.error('[Chat] Agent backend failed:', agentError.message);
 
-        // For tool-required requests, always try direct execution fallback.
-        // Never degrade to plain chat, which can hallucinate execution status.
-        console.log('[Chat] Attempting direct tool execution fallback after agent backend failure...');
+        // If the primary runtime already executed tools and updated on-chain state,
+        // do not run the full PEVD loop a second time via fallback.
+        if (primaryRuntimeResult?.results?.length) {
+          console.warn('[Chat] Skipping direct fallback because the primary runtime already produced results.');
 
-        try {
-          const runtimeResult = await runtime.run(
-            truncatedMessage,
-            routingPlan,
-            async () => {
-              const directExecResult = await executeToolsDirectlyService(
-                routingPlan,
-                truncatedMessage,
-                {
-                  walletAddress: walletAddress || null,
-                  privateKey: privateKey || null,
-                  defaultEmailTo: defaultEmailTo || userEmail || null,
-                  userEmail: userEmail || null,
-                  apiKey: req.headers['x-api-key'] || process.env.MASTER_API_KEY || null
-                }
-              );
-              
-              // Map directExecResult to runtime format
-              return {
-                agent_response: formatToolResponse(directExecResult),
-                tool_calls: directExecResult.tool_calls,
-                results: directExecResult.results
-              };
+          aiResponse = primaryRuntimeResult.agent_response ||
+            'The agent completed execution, but the final response formatting failed. Please check the tool results below.';
+          toolResults = {
+            tool_calls: primaryRuntimeResult.tool_calls || [],
+            results: primaryRuntimeResult.results || [],
+            routing_plan: routingPlan,
+            execution_mode: 'primary_runtime_only',
+            runtime: {
+              onChainId: primaryRuntimeResult.onChainId,
+              decision: primaryRuntimeResult.decision,
+              verification: primaryRuntimeResult.verification,
+              agent_log: runtime.exportLogs()
             }
-          );
+          };
+        } else {
 
-          if (runtimeResult && runtimeResult.results && runtimeResult.results.length > 0) {
-            const successCount = runtimeResult.results.filter(r => r.success).length;
-            console.log('[Chat] Direct tool execution fallback completed:', `${successCount}/${runtimeResult.results.length} successful`);
-            aiResponse = runtimeResult.agent_response;
-            toolResults = {
-              tool_calls: runtimeResult.tool_calls,
-              results: runtimeResult.results,
-              routing_plan: routingPlan,
-              execution_mode: 'direct_fallback',
-              runtime: {
-                onChainId: runtimeResult.onChainId,
-                decision: runtimeResult.decision,
-                verification: runtimeResult.verification,
-                agent_log: runtime.exportLogs() // Added standard agent_log.json
+          // For tool-required requests, always try direct execution fallback.
+          // Never degrade to plain chat, which can hallucinate execution status.
+          console.log('[Chat] Attempting direct tool execution fallback after agent backend failure...');
+
+          try {
+            const runtimeResult = await runtime.run(
+              truncatedMessage,
+              routingPlan,
+              async () => {
+                const directExecResult = await executeToolsDirectlyService(
+                  routingPlan,
+                  truncatedMessage,
+                  {
+                    walletAddress: walletAddress || null,
+                    privateKey: privateKey || null,
+                    defaultEmailTo: defaultEmailTo || userEmail || null,
+                    userEmail: userEmail || null,
+                    apiKey: req.headers['x-api-key'] || process.env.MASTER_API_KEY || null
+                  }
+                );
+                
+                // Map directExecResult to runtime format
+                return {
+                  agent_response: formatToolResponse(directExecResult),
+                  tool_calls: directExecResult.tool_calls,
+                  results: directExecResult.results
+                };
               }
-            };
-          } else {
+            );
+
+            if (runtimeResult && runtimeResult.results && runtimeResult.results.length > 0) {
+              const successCount = runtimeResult.results.filter(r => r.success).length;
+              console.log('[Chat] Direct tool execution fallback completed:', `${successCount}/${runtimeResult.results.length} successful`);
+              aiResponse = runtimeResult.agent_response;
+              toolResults = {
+                tool_calls: runtimeResult.tool_calls,
+                results: runtimeResult.results,
+                routing_plan: routingPlan,
+                execution_mode: 'direct_fallback',
+                runtime: {
+                  onChainId: runtimeResult.onChainId,
+                  decision: runtimeResult.decision,
+                  verification: runtimeResult.verification,
+                  agent_log: runtime.exportLogs() // Added standard agent_log.json
+                }
+              };
+            } else {
+              aiResponse = `I could not execute the requested blockchain actions because the execution backend is unavailable right now. No transfer or email was sent. Please retry in a moment.`;
+            }
+          } catch (directError) {
+            console.error('[Chat] Direct tool execution failed:', directError.message);
             aiResponse = `I could not execute the requested blockchain actions because the execution backend is unavailable right now. No transfer or email was sent. Please retry in a moment.`;
           }
-        } catch (directError) {
-          console.error('[Chat] Direct tool execution failed:', directError.message);
-          aiResponse = `I could not execute the requested blockchain actions because the execution backend is unavailable right now. No transfer or email was sent. Please retry in a moment.`;
         }
       }
     } else {

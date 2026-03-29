@@ -44,6 +44,7 @@ class BlockOpsAgentRuntime {
     
     this.orchestrator = new AgentOrchestrator();
     this.logs = [];
+    this.reputationUpdated = false;
   }
 
   /**
@@ -303,6 +304,10 @@ class BlockOpsAgentRuntime {
    */
   async updateReputation(onChainId, verification) {
     if (!this.reputationAddr || !this.wallet) return;
+    if (this.reputationUpdated) {
+      console.warn(`[Runtime] Reputation already updated for agent ${onChainId} in this runtime instance. Skipping duplicate write.`);
+      return;
+    }
 
     try {
       const reputationContract = new ethers.Contract(this.reputationAddr, REPUTATION_ABI, this.wallet);
@@ -317,6 +322,7 @@ class BlockOpsAgentRuntime {
         "runtime-execution",
         ethers.ZeroHash
       );
+      this.reputationUpdated = true;
       
       console.log(`[Runtime] Reputation updated for agent ${onChainId}: ${score}`);
     } catch (err) {
