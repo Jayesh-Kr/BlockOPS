@@ -31,6 +31,8 @@ export interface ConversationChatRequest {
   pkpPublicKey?: string
   pkpTokenId?: string
   privateKey?: string
+  deliveryPlatform?: 'web' | 'telegram'
+  telegramChatId?: string
   defaultEmailTo?: string
   userEmail?: string
 }

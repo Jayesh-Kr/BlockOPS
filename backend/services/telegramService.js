@@ -767,6 +767,8 @@ async function handleFreeText(chatId, text, user) {
       userId,
       message: text,
       conversationId,
+      deliveryPlatform: 'telegram',
+      telegramChatId: String(chatId),
       systemPrompt: agentConfig?.systemPrompt,       // null = use default
       enabledTools: agentConfig?.enabledTools,       // null = enable all
       walletAddress: telegramWalletContext.walletAddress, // linked user wallet context (fallback: linked agent wallet)

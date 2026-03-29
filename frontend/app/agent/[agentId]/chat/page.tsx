@@ -22,7 +22,7 @@ import {
   type AgentAuditLog,
   type AgentAuditLogContent,
 } from "@/lib/agents"
-import { sendChatWithMemory } from "@/lib/backend"
+import { getConversationMessages, sendChatWithMemory } from "@/lib/backend"
 import type { Agent } from "@/lib/supabase"
 import { useWallets } from "@privy-io/react-auth"
 import { decryptStoredPrivateKey } from "@/lib/lit-private-key"
@@ -818,6 +818,7 @@ export default function AgentChatPage() {
         userId: dbUser.id,
         message: userQuery,
         conversationId: conversationId,
+        deliveryPlatform: "web",
         systemPrompt: `You are a helpful AI assistant for blockchain operations. The agent has these tools: ${agent.tools?.map((t) => t.tool).join(", ")}`,
         walletAddress: effectiveWalletAddress,
         walletType: dbUser?.wallet_type || undefined,
@@ -910,6 +911,44 @@ export default function AgentChatPage() {
       setIsLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (!conversationId || !dbUser?.id || isLoading) {
+      return
+    }
+
+    let cancelled = false
+
+    const syncMessages = async () => {
+      try {
+        const response = await getConversationMessages(conversationId)
+        if (cancelled) return
+
+        const hydratedMessages: Message[] = (response.messages || []).map((message: any) => ({
+          id: message.id,
+          role: message.role === "assistant" ? "assistant" : "user",
+          content: message.content,
+          timestamp: new Date(message.created_at),
+          conversationId,
+          toolResults: message.tool_calls || undefined,
+        }))
+
+        setMessages(hydratedMessages)
+      } catch (error) {
+        console.warn("Failed to sync conversation messages:", error)
+      }
+    }
+
+    void syncMessages()
+    const timerId = window.setInterval(() => {
+      void syncMessages()
+    }, 10000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timerId)
+    }
+  }, [conversationId, dbUser?.id, isLoading])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {

@@ -78,6 +78,7 @@ function addInMemoryMessage(conversationId, role, content, toolCalls = null) {
   }
 
   const message = {
+    id: `mem-msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     role,
     content,
     created_at: new Date().toISOString()
@@ -97,6 +98,14 @@ function addInMemoryMessage(conversationId, role, content, toolCalls = null) {
 function getInMemoryMessages(conversationId) {
   const conversation = inMemoryConversations.get(conversationId);
   return conversation?.messages || [];
+}
+
+function hasInMemoryConversation(conversationId) {
+  return inMemoryConversations.has(conversationId);
+}
+
+function appendAssistantMessageToConversation(conversationId, content, toolCalls = null) {
+  addInMemoryMessage(conversationId, 'assistant', content, toolCalls);
 }
 
 function getAuditWaitMs() {
@@ -169,6 +178,8 @@ async function chat(req, res) {
       pkpTokenId,
       privateKey,
       enabledTools,
+      deliveryPlatform,
+      telegramChatId,
       defaultEmailTo,
       userEmail
     } = req.body;
@@ -326,6 +337,25 @@ async function chat(req, res) {
       wallet_history: 'wallet_history'
     };
     const normalizeToolName = (toolName) => TOOL_ALIASES[toolName] || toolName;
+    const isReminderToolAllowed = (step, allowedTools) => {
+      if (!step) return false;
+      if (allowedTools.includes(step.tool)) return true;
+
+      if (step.tool === 'schedule_reminder') {
+        const taskType = step.parameters?.taskType;
+        if (taskType === 'balance') return allowedTools.includes('get_balance');
+        if (taskType === 'price') return allowedTools.includes('fetch_price');
+        if (taskType === 'portfolio') {
+          return allowedTools.includes('get_portfolio') || allowedTools.includes('get_balance') || allowedTools.includes('fetch_price');
+        }
+      }
+
+      if (step.tool === 'list_reminders' || step.tool === 'cancel_reminder') {
+        return ['schedule_reminder', 'get_balance', 'get_portfolio', 'fetch_price'].some((toolName) => allowedTools.includes(toolName));
+      }
+
+      return false;
+    };
     let blockedByToolPermissions = false;
     let requestedTools = [];
     
@@ -335,7 +365,7 @@ async function chat(req, res) {
       if (routingPlan.execution_plan?.steps) {
         const originalSteps = [...routingPlan.execution_plan.steps];
         routingPlan.execution_plan.steps = routingPlan.execution_plan.steps.filter(
-          step => normalizedAllowedTools.includes(step.tool)
+          step => isReminderToolAllowed(step, normalizedAllowedTools)
         );
         requestedTools = [...new Set(originalSteps.map(step => step.tool))];
         if (originalSteps.length > 0 && routingPlan.execution_plan.steps.length === 0) {
@@ -536,11 +566,14 @@ async function chat(req, res) {
       
       try {
         const preferDirectExecution =
-          walletType === 'pkp' &&
-          routingPlan.execution_plan?.steps?.some(step => step.tool === 'transfer');
+          (walletType === 'pkp' &&
+            routingPlan.execution_plan?.steps?.some(step => step.tool === 'transfer')) ||
+          routingPlan.execution_plan?.steps?.some(step =>
+            ['schedule_reminder', 'list_reminders', 'cancel_reminder'].includes(step.tool)
+          );
 
         if (preferDirectExecution) {
-          throw new Error('PKP transfer flow uses direct execution');
+          throw new Error('Direct execution selected for this request');
         }
 
         // Build context summary from recent messages for the agent
@@ -646,6 +679,11 @@ async function chat(req, res) {
               pkpPublicKey: pkpPublicKey || null,
               pkpTokenId: pkpTokenId || null,
               privateKey: privateKey || null,
+              conversationId: convId,
+              agentId,
+              userId,
+              deliveryPlatform: deliveryPlatform || 'web',
+              telegramChatId: telegramChatId || null,
               defaultEmailTo: defaultEmailTo || userEmail || null,
               userEmail: userEmail || null,
               apiKey: req.headers['x-api-key'] || process.env.MASTER_API_KEY || null
@@ -840,22 +878,33 @@ async function listConversations(req, res) {
  * GET /api/conversations/:conversationId/messages
  */
 async function getMessages(req, res) {
-  if (!supabase) {
-    return res.status(503).json({ 
-      error: 'Conversation service not available. Supabase not configured.' 
-    });
-  }
-
   try {
     const { conversationId } = req.params;
     const { limit = 50 } = req.query;
+    const parsedLimit = parseInt(limit, 10);
+    const finalLimit = Number.isNaN(parsedLimit) ? 50 : parsedLimit;
+
+    if (!isUuidLike(conversationId) || hasInMemoryConversation(conversationId)) {
+      const messages = getInMemoryMessages(conversationId).slice(-finalLimit);
+      return res.json({
+        messages,
+        count: messages.length,
+        memoryMode: true
+      });
+    }
+
+    if (!supabase) {
+      return res.status(503).json({ 
+        error: 'Conversation service not available. Supabase not configured.' 
+      });
+    }
 
     const { data, error } = await supabase
       .from('conversation_messages')
       .select('id, role, content, tool_calls, created_at')
       .eq('conversation_id', conversationId)
       .order('created_at', { ascending: true })
-      .limit(parseInt(limit));
+      .limit(finalLimit);
 
     if (error) {
       console.error('Error getting messages:', error);
@@ -1074,8 +1123,12 @@ module.exports = {
   listConversations,
   getMessages,
   getConversation,
- deleteConversation,
+  deleteConversation,
   updateConversation,
   getStats,
-  runCleanup
+  runCleanup,
+  isUuidLike,
+  hasInMemoryConversation,
+  appendAssistantMessageToConversation,
+  getInMemoryMessages
 };

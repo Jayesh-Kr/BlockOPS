@@ -35,6 +35,9 @@ const TOOL_ENDPOINTS = {
   bridge_withdraw:     { method: 'POST', path: '/bridge/withdraw' },
   bridge_status:       { method: 'GET',  path: '/bridge/status/{txHash}' },
   schedule_transfer:   { method: 'POST', path: '/schedule/transfer' },
+  schedule_reminder:   { method: 'POST', path: '/reminders' },
+  list_reminders:      { method: 'GET',  path: '/reminders' },
+  cancel_reminder:     { method: 'DELETE', path: '/reminders/{id}' },
   list_schedules:      { method: 'GET',  path: '/schedule' },
   cancel_schedule:     { method: 'DELETE', path: '/schedule/{id}' }
 };
@@ -542,6 +545,55 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       if (!cronExpression) missing.push('cronExpression');
       break;
     }
+    case 'schedule_reminder': {
+      const taskType = params.taskType || params.task_type;
+      const walletAddress = params.walletAddress || params.wallet_address || params.address || contextualAddress;
+      const tokenQuery = params.tokenQuery || params.token_query || params.query || params.token;
+      const cronExpression = params.cronExpression || params.cron_expression || params.schedule || params.cron;
+      const label = params.label;
+      const conversationId = params.conversationId || executionContext.conversationId || null;
+      const userId = params.userId || executionContext.userId || null;
+      const agentId = params.agentId || executionContext.agentId || null;
+      const deliveryPlatform = params.deliveryPlatform || executionContext.deliveryPlatform || 'web';
+      const telegramChatId = params.telegramChatId || executionContext.telegramChatId || null;
+      const originalMessage = params.originalMessage || fallbackMessage;
+
+      mapped = {
+        taskType,
+        cronExpression,
+        label,
+        walletAddress,
+        tokenQuery,
+        conversationId,
+        userId,
+        agentId,
+        deliveryPlatform,
+        telegramChatId,
+        originalMessage
+      };
+
+      if (!taskType) missing.push('taskType');
+      if (!cronExpression) missing.push('cronExpression');
+      if (!userId) missing.push('userId');
+      if ((taskType === 'balance' || taskType === 'portfolio') && !walletAddress) missing.push('walletAddress');
+      if (taskType === 'price' && !tokenQuery) missing.push('tokenQuery');
+      if (deliveryPlatform === 'web' && !conversationId) missing.push('conversationId');
+      if (deliveryPlatform === 'telegram' && !telegramChatId) missing.push('telegramChatId');
+      break;
+    }
+    case 'list_reminders': {
+      const userId = params.userId || executionContext.userId || null;
+      const agentId = params.agentId || executionContext.agentId || null;
+      mapped = { userId, agentId };
+      if (!userId && !agentId) missing.push('userId');
+      break;
+    }
+    case 'cancel_reminder': {
+      const id = params.id || params.reminderId || params.jobId || params.job_id;
+      mapped = { id };
+      if (!id) missing.push('id');
+      break;
+    }
     case 'list_schedules': {
       mapped = {}; // no required params
       break;
@@ -696,6 +748,81 @@ function safeCalculate(params) {
   }
 }
 
+async function invokeLocalController(handler, req) {
+  return new Promise((resolve, reject) => {
+    let statusCode = 200;
+    let settled = false;
+
+    const res = {
+      status(code) {
+        statusCode = code;
+        return this;
+      },
+      json(payload) {
+        if (settled) {
+          return payload;
+        }
+
+        settled = true;
+
+        if (statusCode >= 400 || payload?.success === false) {
+          const error = new Error(payload?.error || payload?.message || 'Request failed');
+          error.status = statusCode;
+          error.payload = payload;
+          reject(error);
+          return payload;
+        }
+
+        resolve(payload);
+        return payload;
+      }
+    };
+
+    Promise.resolve(handler(req, res)).catch((error) => {
+      if (!settled) {
+        reject(error);
+      }
+    });
+  });
+}
+
+async function executeReminderToolLocally(tool, mapped) {
+  const {
+    createReminder,
+    listReminders,
+    cancelReminder
+  } = require('../controllers/reminderController');
+
+  if (tool === 'schedule_reminder') {
+    return invokeLocalController(createReminder, {
+      body: { ...mapped },
+      query: {},
+      params: {},
+      apiKey: null
+    });
+  }
+
+  if (tool === 'list_reminders') {
+    return invokeLocalController(listReminders, {
+      body: {},
+      query: { ...mapped },
+      params: {},
+      apiKey: null
+    });
+  }
+
+  if (tool === 'cancel_reminder') {
+    return invokeLocalController(cancelReminder, {
+      body: {},
+      query: {},
+      params: { id: mapped.id },
+      apiKey: null
+    });
+  }
+
+  throw new Error(`Unsupported local reminder tool: ${tool}`);
+}
+
 async function executeToolStep(step, fallbackMessage, executionContext = {}) {
   const { tool, parameters } = step;
   const mapping = mapToolParams(tool, parameters, fallbackMessage, executionContext);
@@ -728,6 +855,11 @@ async function executeToolStep(step, fallbackMessage, executionContext = {}) {
     canPrepareTransfer &&
     executionContext.walletType === 'pkp' &&
     !!executionContext.pkpPublicKey;
+  const isReminderTool = new Set([
+    'schedule_reminder',
+    'list_reminders',
+    'cancel_reminder'
+  ]).has(tool);
 
   if (mapping.missing.length > 0) {
     const missingPrivateKeyOnly =
@@ -753,6 +885,25 @@ async function executeToolStep(step, fallbackMessage, executionContext = {}) {
         error: `Missing required parameters: ${mapping.missing.join(', ')}`
       }
     };
+  }
+
+  if (isReminderTool) {
+    try {
+      const payload = await executeReminderToolLocally(tool, mapping.mapped);
+      return {
+        tool_call: { tool, parameters: mapping.mapped },
+        result: { success: true, tool, result: payload }
+      };
+    } catch (error) {
+      return {
+        tool_call: { tool, parameters: mapping.mapped },
+        result: {
+          success: false,
+          tool,
+          error: error.status ? `HTTP ${error.status}: ${error.message}` : error.message
+        }
+      };
+    }
   }
 
   const config = TOOL_ENDPOINTS[tool];
@@ -1257,6 +1408,17 @@ function formatToolResponse(toolResults) {
       }
       case 'schedule_transfer': {
         return `Scheduled transfer created (ID: ${payload.id}). ${payload.note || ''} Type: ${payload.type}. Amount: ${payload.amount}. To: ${payload.toAddress?.slice(0, 10)}...`;
+      }
+      case 'schedule_reminder': {
+        return `Scheduled reminder created (ID: ${payload.id}). ${payload.note || ''}`;
+      }
+      case 'list_reminders': {
+        const count = payload.total || 0;
+        const active = (payload.jobs || []).filter(j => j.status === 'active').length;
+        return `Found ${count} reminder job(s), ${active} active.`;
+      }
+      case 'cancel_reminder': {
+        return `Reminder ${payload.id} has been cancelled.`;
       }
       case 'list_schedules': {
         const count = payload.total || 0;

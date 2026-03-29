@@ -1,4 +1,5 @@
 const { chatWithAI } = require('./aiService');
+const { detectReminderPlan } = require('./reminderIntent');
 
 /**
  * Available tools in the system
@@ -166,6 +167,24 @@ const AVAILABLE_TOOLS = {
     parameters: ['privateKey', 'toAddress', 'amount', 'cronExpression (cron string or ISO datetime)', 'tokenAddress (optional)', 'label (optional)'],
     examples: ['Schedule a transfer of 0.01 ETH every day at 9am', 'Send 100 USDC to 0x... every Monday', 'Schedule a one-time transfer at 2026-03-10T12:00:00Z']
   },
+  schedule_reminder: {
+    name: 'schedule_reminder',
+    description: 'Schedule a one-time or recurring reminder that sends a balance update, wallet value snapshot, or token price back to the same chat.',
+    parameters: ['taskType (balance|portfolio|price)', 'cronExpression (cron string or ISO datetime)', 'walletAddress (for balance/portfolio)', 'tokenQuery (for price)', 'label (optional)'],
+    examples: ['Tell me my wallet balance after 5 minutes', 'Check my wallet value every 5 minutes', 'Send me the ETH price every hour']
+  },
+  list_reminders: {
+    name: 'list_reminders',
+    description: 'List scheduled reminder jobs for this user or agent.',
+    parameters: [],
+    examples: ['Show my reminders', 'List scheduled alerts', 'What reminders are active?']
+  },
+  cancel_reminder: {
+    name: 'cancel_reminder',
+    description: 'Cancel a scheduled reminder job by id.',
+    parameters: ['id'],
+    examples: ['Cancel reminder abc123', 'Stop schedule 123', 'Delete my wallet alert']
+  },
   list_schedules: {
     name: 'list_schedules',
     description: 'List all scheduled transfers for this agent — shows cron expression, next run, status, and run count.',
@@ -187,6 +206,11 @@ const AVAILABLE_TOOLS = {
  * @returns {Promise<Object>} Tool execution plan with tools, order, and parameters
  */
 async function intelligentToolRouting(userMessage, conversationHistory = []) {
+  const reminderPlan = detectReminderPlan(userMessage, conversationHistory);
+  if (reminderPlan) {
+    return reminderPlan;
+  }
+
   // Quick regex-based off-topic detection
   const offTopicPatterns = [
     /\b(prime minister|president|politician|government|election|politics)\b/i,
