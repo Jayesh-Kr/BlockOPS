@@ -100,6 +100,20 @@ function buildPieceUri(pieceCid) {
   return pieceCid ? `filecoin://piece/${pieceCid}` : null;
 }
 
+function parsePieceCidFromUri(uri) {
+  const value = String(uri || '').trim();
+  if (!value) {
+    return null;
+  }
+
+  const pieceUriPrefix = 'filecoin://piece/';
+  if (value.toLowerCase().startsWith(pieceUriPrefix)) {
+    return value.slice(pieceUriPrefix.length).trim() || null;
+  }
+
+  return null;
+}
+
 function normalizePieceCid(pieceCidValue) {
   if (!pieceCidValue) {
     return null;
@@ -107,7 +121,27 @@ function normalizePieceCid(pieceCidValue) {
 
   if (typeof pieceCidValue === 'string') {
     const trimmed = pieceCidValue.trim();
-    return trimmed || null;
+    if (!trimmed || trimmed === '[object Object]') {
+      return null;
+    }
+
+    // Some rows persisted a JSON-shaped CID string like {"/":"bafy..."}.
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      const { parsed } = safeParseJson(trimmed);
+      const normalizedFromJson = normalizePieceCid(parsed);
+      if (normalizedFromJson) {
+        return normalizedFromJson;
+      }
+
+      const slashMatch = trimmed.match(/["']\/["']\s*:\s*["']([^"']+)["']/);
+      if (slashMatch?.[1]) {
+        return slashMatch[1].trim();
+      }
+
+      return null;
+    }
+
+    return trimmed;
   }
 
   if (typeof pieceCidValue === 'object') {
@@ -154,6 +188,26 @@ function encodePayload(payload, options = {}) {
   const serialized = JSON.stringify(body);
   const bytes = new TextEncoder().encode(serialized);
   return ensureMinimumUploadSize(bytes);
+}
+
+function decodeArchivedBytes(bytes) {
+  const text = new TextDecoder().decode(bytes || new Uint8Array());
+  // Stored payloads are padded to meet minimum upload size, trim trailing NUL bytes.
+  return text.replace(/\u0000+$/g, '').trim();
+}
+
+function safeParseJson(text) {
+  try {
+    return {
+      parsed: JSON.parse(text),
+      error: null
+    };
+  } catch (error) {
+    return {
+      parsed: null,
+      error: error?.message || String(error)
+    };
+  }
 }
 
 async function getSynapseClient() {
@@ -273,9 +327,68 @@ async function archiveJsonToFilecoin(payload, options = {}) {
   });
 }
 
+async function retrieveJsonFromFilecoin(options = {}) {
+  const requestedPieceCid = normalizePieceCid(options.pieceCid) || parsePieceCidFromUri(options.uri);
+
+  if (!requestedPieceCid) {
+    return {
+      status: 'failed',
+      provider: 'synapse',
+      error: 'Missing pieceCid for retrieval'
+    };
+  }
+
+  const walletPrivateKey = resolveWalletPrivateKey(options.privateKey || null);
+  if (!isValidPrivateKey(walletPrivateKey)) {
+    return {
+      status: 'not_configured',
+      provider: 'synapse',
+      pieceCid: requestedPieceCid,
+      error: 'Filecoin signer key missing. Set FILECOIN_WALLET_PRIVATE_KEY or pass options.privateKey'
+    };
+  }
+
+  try {
+    const synapse = await createSynapseClient(walletPrivateKey);
+    const data = await synapse.storage.download({
+      pieceCid: requestedPieceCid,
+      withCDN: parseBooleanEnv(process.env.SYNAPSE_WITH_CDN, false)
+    });
+
+    const text = decodeArchivedBytes(data);
+    const { parsed, error: parseError } = safeParseJson(text);
+
+    return {
+      status: 'stored',
+      provider: 'synapse',
+      pieceCid: requestedPieceCid,
+      uri: buildPieceUri(requestedPieceCid),
+      contentType: parsed ? 'json' : 'text',
+      parsed,
+      payload: parsed && typeof parsed === 'object' && parsed !== null && Object.prototype.hasOwnProperty.call(parsed, 'payload')
+        ? parsed.payload
+        : parsed,
+      metadata: parsed && typeof parsed === 'object' && parsed !== null && Object.prototype.hasOwnProperty.call(parsed, 'metadata')
+        ? parsed.metadata
+        : null,
+      rawText: text,
+      parseError
+    };
+  } catch (error) {
+    return {
+      status: 'failed',
+      provider: 'synapse',
+      pieceCid: requestedPieceCid,
+      error: error?.message || String(error)
+    };
+  }
+}
+
 module.exports = {
   archiveJsonToFilecoin,
   buildPieceUri,
   getFilecoinProvider,
-  isFilecoinStorageConfigured
+  isFilecoinStorageConfigured,
+  parsePieceCidFromUri,
+  retrieveJsonFromFilecoin
 };

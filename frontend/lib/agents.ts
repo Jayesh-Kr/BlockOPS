@@ -35,6 +35,22 @@ export interface ListAgentAuditLogsParams {
   limit?: number
 }
 
+export interface AgentAuditLogContent {
+  logId: string
+  filecoin: {
+    status: string
+    provider: string
+    pieceCid: string | null
+    uri: string | null
+    contentType?: "json" | "text"
+    parseError?: string | null
+  }
+  envelope: unknown
+  payload: unknown
+  metadata: unknown
+  rawText: string
+}
+
 async function parseJson(response: Response) {
   return response.json().catch(() => ({}))
 }
@@ -179,4 +195,24 @@ export async function listAgentAuditLogs(
     logs: Array.isArray(payload.logs) ? (payload.logs as AgentAuditLog[]) : [],
     count: typeof payload.count === 'number' ? payload.count : 0,
   }
+}
+
+export async function getAgentAuditLogContent(
+  agentId: string,
+  logId: string,
+  userId: string
+): Promise<AgentAuditLogContent> {
+  const query = new URLSearchParams({ userId })
+  const response = await fetch(
+    `${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}/audit-logs/${encodeURIComponent(logId)}/content?${query.toString()}`
+  )
+  const payload = await parseJson(response)
+
+  if (!response.ok || !payload.success) {
+    throw new Error(
+      `Failed to fetch stored Filecoin JSON: ${payload.error || `Request failed with status ${response.status}`}`
+    )
+  }
+
+  return payload as AgentAuditLogContent
 }

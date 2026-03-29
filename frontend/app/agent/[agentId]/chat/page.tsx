@@ -10,13 +10,18 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
 import { toast } from "@/components/ui/use-toast"
 import { UserProfile } from "@/components/user-profile"
 import { useAuth } from "@/lib/auth"
-import { getAgentById, listAgentAuditLogs, type AgentAuditLog } from "@/lib/agents"
+import {
+  getAgentById,
+  getAgentAuditLogContent,
+  listAgentAuditLogs,
+  type AgentAuditLog,
+  type AgentAuditLogContent,
+} from "@/lib/agents"
 import { sendChatWithMemory } from "@/lib/backend"
 import type { Agent } from "@/lib/supabase"
 import { useWallets } from "@privy-io/react-auth"
@@ -217,6 +222,9 @@ function AuditLogsSheet({
   const [scopeFilter, setScopeFilter] = useState<AuditScopeFilter>("all")
   const [toolFilter, setToolFilter] = useState<string>("all")
   const [expandedById, setExpandedById] = useState<Record<string, boolean>>({})
+  const [contentById, setContentById] = useState<Record<string, AgentAuditLogContent>>({})
+  const [contentErrorById, setContentErrorById] = useState<Record<string, string>>({})
+  const [contentLoadingById, setContentLoadingById] = useState<Record<string, boolean>>({})
 
   const noConversationSelected = scopeFilter === "conversation" && !conversationId
 
@@ -324,9 +332,45 @@ function AuditLogsSheet({
     { value: "not_configured", label: "Not Config" },
   ]
 
+  const handleLoadStoredJson = async (logId: string) => {
+    if (!userId || contentLoadingById[logId] || contentById[logId]) {
+      return
+    }
+
+    setContentLoadingById((prev) => ({ ...prev, [logId]: true }))
+    setContentErrorById((prev) => {
+      const next = { ...prev }
+      delete next[logId]
+      return next
+    })
+
+    try {
+      const content = await getAgentAuditLogContent(agentId, logId, userId)
+      setContentById((prev) => ({ ...prev, [logId]: content }))
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to load stored JSON"
+      setContentErrorById((prev) => ({ ...prev, [logId]: message }))
+    } finally {
+      setContentLoadingById((prev) => ({ ...prev, [logId]: false }))
+    }
+  }
+
+  const handleClearStoredJson = (logId: string) => {
+    setContentById((prev) => {
+      const next = { ...prev }
+      delete next[logId]
+      return next
+    })
+    setContentErrorById((prev) => {
+      const next = { ...prev }
+      delete next[logId]
+      return next
+    })
+  }
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-2xl p-0">
+      <SheetContent side="right" className="w-full min-h-0 gap-0 p-0 sm:max-w-2xl">
         <SheetHeader className="border-b border-border pb-3">
           <div className="flex items-center justify-between gap-2 pr-8">
             <div>
@@ -418,7 +462,7 @@ function AuditLogsSheet({
           </div>
         </SheetHeader>
 
-        <ScrollArea className="flex-1 px-4 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
           {isLoading && logs.length === 0 && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -443,6 +487,9 @@ function AuditLogsSheet({
           <div className="space-y-3">
             {filteredLogs.map((log) => {
               const isExpanded = Boolean(expandedById[log.id])
+              const storedContent = contentById[log.id]
+              const contentError = contentErrorById[log.id]
+              const contentLoading = Boolean(contentLoadingById[log.id])
 
               return (
                 <Collapsible
@@ -538,12 +585,70 @@ function AuditLogsSheet({
                     <AuditJsonBlock title="Result Summary" value={log.result_summary} />
                     <AuditJsonBlock title="Raw Result" value={log.raw_result} />
                     <AuditJsonBlock title="Full Stored Row" value={log} />
+
+                    {log.storage_status === "stored" && log.filecoin_cid && (
+                      <div className="space-y-2 rounded-md border border-border bg-background/50 p-2.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Filecoin Stored JSON
+                          </p>
+                          {!storedContent && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-6 px-2 text-[10px]"
+                              onClick={() => void handleLoadStoredJson(log.id)}
+                              disabled={contentLoading || !userId}
+                            >
+                              {contentLoading ? (
+                                <>
+                                  <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                  Loading...
+                                </>
+                              ) : (
+                                "View Stored JSON"
+                              )}
+                            </Button>
+                          )}
+
+                          {storedContent && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-2 text-[10px]"
+                              onClick={() => handleClearStoredJson(log.id)}
+                            >
+                              Hide
+                            </Button>
+                          )}
+                        </div>
+
+                        {contentError && (
+                          <div className="rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-xs text-red-600">
+                            {contentError}
+                          </div>
+                        )}
+
+                        {storedContent && (
+                          <>
+                            <AuditJsonBlock title="Stored Envelope (exact upload JSON)" value={storedContent.envelope} />
+                            <AuditJsonBlock title="Stored Payload" value={storedContent.payload} />
+                            <AuditJsonBlock title="Stored Metadata" value={storedContent.metadata} />
+                            {storedContent.filecoin.contentType === "text" && (
+                              <AuditJsonBlock title="Raw Stored Text" value={storedContent.rawText} />
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
                   </CollapsibleContent>
                 </Collapsible>
               )
             })}
           </div>
-        </ScrollArea>
+        </div>
       </SheetContent>
     </Sheet>
   )

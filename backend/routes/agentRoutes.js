@@ -17,6 +17,7 @@ const {
 } = require('../controllers/agentController');
 const {
   discoverAgentRegistry,
+  getAgentAuditLogContent,
   getAgentRegistry,
   listAgentAuditLogs,
   upsertAgentRegistry
@@ -74,6 +75,14 @@ router.get('/:id/registry', getAgentRegistry);
  * Query: { userId, conversationId?, tool?, success?, limit? }
  */
 router.get('/:id/audit-logs', listAgentAuditLogs);
+
+/**
+ * GET /agents/:id/audit-logs/:logId/content
+ * Retrieve exact JSON content archived on Filecoin for a specific audit log.
+ *
+ * Query: { userId }
+ */
+router.get('/:id/audit-logs/:logId/content', getAgentAuditLogContent);
 
 /**
  * GET /agents/:id?userId=xxx

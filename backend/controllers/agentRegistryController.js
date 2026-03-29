@@ -1,5 +1,9 @@
 const supabase = require('../config/supabase');
-const { archiveJsonToFilecoin } = require('../services/filecoinStorageService');
+const {
+  archiveJsonToFilecoin,
+  parsePieceCidFromUri,
+  retrieveJsonFromFilecoin
+} = require('../services/filecoinStorageService');
 
 function toArray(value, fallback = []) {
   if (Array.isArray(value)) {
@@ -395,8 +399,103 @@ async function listAgentAuditLogs(req, res) {
   }
 }
 
+// GET /agents/:id/audit-logs/:logId/content
+async function getAgentAuditLogContent(req, res) {
+  if (!ensureSupabase(res)) {
+    return;
+  }
+
+  try {
+    const { id: agentId, logId } = req.params;
+    const { userId } = req.query;
+
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'Missing required query parameter: userId' });
+    }
+
+    const agent = await loadAgent(agentId);
+    if (!agent) {
+      return res.status(404).json({ success: false, error: 'Agent not found' });
+    }
+
+    if (agent.user_id !== userId) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+
+    const { data: logRow, error: logError } = await supabase
+      .from('agent_tool_execution_logs')
+      .select('*')
+      .eq('id', logId)
+      .eq('agent_id', agentId)
+      .maybeSingle();
+
+    if (logError) {
+      console.error('[AgentRegistry] Audit content query error:', logError);
+      return res.status(500).json({ success: false, error: logError.message });
+    }
+
+    if (!logRow) {
+      return res.status(404).json({ success: false, error: 'Audit log entry not found' });
+    }
+
+    const pieceCid = logRow.filecoin_cid || parsePieceCidFromUri(logRow.filecoin_uri) || null;
+    if (!pieceCid) {
+      return res.status(409).json({
+        success: false,
+        error: 'No Filecoin piece CID available for this log entry',
+        log: {
+          id: logRow.id,
+          storageStatus: logRow.storage_status,
+          filecoinUri: logRow.filecoin_uri
+        }
+      });
+    }
+
+    const retrieval = await retrieveJsonFromFilecoin({
+      pieceCid,
+      uri: logRow.filecoin_uri || null
+    });
+
+    if (retrieval.status !== 'stored') {
+      return res.status(502).json({
+        success: false,
+        error: retrieval.error || 'Failed to retrieve Filecoin payload',
+        filecoin: {
+          status: retrieval.status,
+          provider: retrieval.provider,
+          pieceCid: retrieval.pieceCid || pieceCid,
+          uri: retrieval.uri || logRow.filecoin_uri || null
+        }
+      });
+    }
+
+    return res.json({
+      success: true,
+      logId: logRow.id,
+      filecoin: {
+        status: retrieval.status,
+        provider: retrieval.provider,
+        pieceCid: retrieval.pieceCid || pieceCid,
+        uri: retrieval.uri || logRow.filecoin_uri || null,
+        contentType: retrieval.contentType,
+        parseError: retrieval.parseError || null
+      },
+      // This is the exact JSON envelope uploaded through archiveJsonToFilecoin.
+      envelope: retrieval.parsed,
+      // Convenience field for quickly seeing the application payload body.
+      payload: retrieval.payload,
+      metadata: retrieval.metadata,
+      rawText: retrieval.rawText
+    });
+  } catch (error) {
+    console.error('[AgentRegistry] Audit content retrieval error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
 module.exports = {
   discoverAgentRegistry,
+  getAgentAuditLogContent,
   getAgentRegistry,
   listAgentAuditLogs,
   upsertAgentRegistry
