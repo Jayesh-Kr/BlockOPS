@@ -3,6 +3,11 @@ const { buildContext, truncateMessage } = require('../utils/memory');
 const { chatWithAI } = require('../services/aiService');
 const { intelligentToolRouting, convertToAgentFormat } = require('../services/toolRouter');
 const { executeToolsDirectly: executeToolsDirectlyService, formatToolResponse } = require('../services/directToolExecutor');
+const {
+  archiveToolExecutionLogs,
+  formatExecutionAuditForChat,
+  sanitizeToolResultsForResponse
+} = require('../services/toolAuditLogService');
 const { fireEvent } = require('../services/webhookService');
 
 const IN_MEMORY_MESSAGE_LIMIT = 30;
@@ -349,6 +354,7 @@ async function chat(req, res) {
     
     let aiResponse;
     let toolResults = null;
+    let executionAudit = null;
 
     if (routingPlan.requires_tools && routingPlan.execution_plan?.steps?.length > 0) {
       // Filter missing_info: remove items that tools in the plan can resolve
@@ -616,6 +622,33 @@ async function chat(req, res) {
       aiResponse = await chatWithAI(context);
     }
 
+    if (toolResults && Array.isArray(toolResults.results) && toolResults.results.length > 0) {
+      try {
+        executionAudit = await archiveToolExecutionLogs({
+          agentId,
+          userId,
+          conversationId: convId,
+          message: truncatedMessage,
+          toolResults,
+          routingPlan
+        });
+
+        const auditText = formatExecutionAuditForChat(executionAudit);
+        if (auditText) {
+          aiResponse = `${aiResponse}\n\n${auditText}`;
+        }
+      } catch (auditError) {
+        console.error('[Chat] Failed to archive execution logs:', auditError.message);
+      }
+    }
+
+    if (toolResults) {
+      toolResults = sanitizeToolResultsForResponse(toolResults);
+      if (executionAudit) {
+        toolResults.execution_audit = executionAudit;
+      }
+    }
+
     // Save AI response (if Supabase is configured)
     if (useSupabase) {
       const { error: aiMsgError } = await supabase
@@ -643,6 +676,7 @@ async function chat(req, res) {
       isNewConversation,
       messageCount: useSupabase ? messages.length + 1 : getInMemoryMessages(convId).length,
       toolResults,
+      executionAudit,
       hasTools: !!toolResults,
       memoryMode: useSupabase ? 'persistent' : 'temporary'
     });
