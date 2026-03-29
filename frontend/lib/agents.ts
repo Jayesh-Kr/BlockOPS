@@ -55,6 +55,17 @@ async function parseJson(response: Response) {
   return response.json().catch(() => ({}))
 }
 
+async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init)
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : 'Unknown network error'
+    throw new Error(
+      `Failed to reach blockchain backend (${BLOCKCHAIN_BACKEND_URL}). Requested: ${url}. ${detail}`
+    )
+  }
+}
+
 function normalizeAgent(agent: any): Agent {
   return {
     id: agent.id,
@@ -74,7 +85,7 @@ export async function createAgent(
   description: string | null,
   tools: ToolConfig
 ): Promise<Agent> {
-  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents`, {
+  const response = await safeFetch(`${BLOCKCHAIN_BACKEND_URL}/agents`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -96,7 +107,7 @@ export async function createAgent(
 }
 
 export async function getAgentsByUserId(userId: string): Promise<Agent[]> {
-  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents?userId=${encodeURIComponent(userId)}`)
+  const response = await safeFetch(`${BLOCKCHAIN_BACKEND_URL}/agents?userId=${encodeURIComponent(userId)}`)
   const payload = await parseJson(response)
 
   if (!response.ok || !payload.success) {
@@ -107,7 +118,7 @@ export async function getAgentsByUserId(userId: string): Promise<Agent[]> {
 }
 
 export async function getAgentById(agentId: string): Promise<Agent | null> {
-  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}`)
+  const response = await safeFetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}`)
   const payload = await parseJson(response)
 
   if (response.status === 404) {
@@ -133,7 +144,7 @@ export async function updateAgent(
     tools?: ToolConfig
   }
 ): Promise<Agent> {
-  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}`, {
+  const response = await safeFetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}`, {
     method: 'PATCH',
     headers: {
       'Content-Type': 'application/json',
@@ -150,7 +161,7 @@ export async function updateAgent(
 }
 
 export async function deleteAgent(agentId: string): Promise<void> {
-  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}`, {
+  const response = await safeFetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}`, {
     method: 'DELETE',
   })
   const payload = await parseJson(response)
@@ -182,7 +193,7 @@ export async function listAgentAuditLogs(
     query.set('limit', String(Math.floor(params.limit)))
   }
 
-  const response = await fetch(
+  const response = await safeFetch(
     `${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}/audit-logs?${query.toString()}`
   )
   const payload = await parseJson(response)
@@ -203,7 +214,7 @@ export async function getAgentAuditLogContent(
   userId: string
 ): Promise<AgentAuditLogContent> {
   const query = new URLSearchParams({ userId })
-  const response = await fetch(
+  const response = await safeFetch(
     `${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}/audit-logs/${encodeURIComponent(logId)}/content?${query.toString()}`
   )
   const payload = await parseJson(response)

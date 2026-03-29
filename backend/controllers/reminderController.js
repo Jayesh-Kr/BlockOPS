@@ -15,6 +15,98 @@ function isOneShot(expr) {
   return /^\d{4}-\d{2}-\d{2}/.test(String(expr || ''));
 }
 
+function normalizeIdList(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || '').trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function normalizeCancelMode(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'all' ? 'all' : 'latest';
+}
+
+function normalizeOnlyActive(value, defaultValue = true) {
+  if (value === undefined || value === null || value === '') {
+    return defaultValue;
+  }
+  return String(value).toLowerCase() !== 'false';
+}
+
+async function fetchReminderCandidates(filters = {}) {
+  const {
+    ids = [],
+    userId = null,
+    agentId = null,
+    conversationId = null,
+    taskType = null,
+    walletAddress = null,
+    onlyActive = true
+  } = filters;
+
+  if (!supabase) {
+    const activeIds = Array.from(activeReminderTasks.keys());
+    let candidates = activeIds.map((id) => ({
+      id,
+      status: 'active',
+      created_at: new Date(0).toISOString()
+    }));
+
+    if (ids.length > 0) {
+      const idSet = new Set(ids);
+      candidates = candidates.filter((job) => idSet.has(job.id));
+    }
+
+    return candidates;
+  }
+
+  let query = supabase
+    .from('scheduled_chat_reminders')
+    .select('id, agent_id, user_id, conversation_id, task_type, wallet_address, cron_expression, type, status, created_at')
+    .order('created_at', { ascending: false });
+
+  if (ids.length > 0) query = query.in('id', ids);
+  if (onlyActive) query = query.eq('status', 'active');
+  if (userId) query = query.eq('user_id', userId);
+  if (agentId) query = query.eq('agent_id', agentId);
+  if (conversationId) query = query.eq('conversation_id', conversationId);
+  if (taskType) query = query.eq('task_type', taskType);
+  if (walletAddress) query = query.ilike('wallet_address', walletAddress);
+
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data || [];
+}
+
+async function cancelReminderById(reminderId) {
+  if (activeReminderTasks.has(reminderId)) {
+    activeReminderTasks.get(reminderId).stop();
+    activeReminderTasks.delete(reminderId);
+  }
+
+  if (supabase) {
+    const { error } = await supabase
+      .from('scheduled_chat_reminders')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('id', reminderId);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+}
+
 function validateReminderJob(job) {
   const errors = [];
 
@@ -465,24 +557,83 @@ async function getReminder(req, res) {
 
 async function cancelReminder(req, res) {
   try {
-    const { id } = req.params;
+    const body = req.body || {};
+    const query = req.query || {};
 
-    if (activeReminderTasks.has(id)) {
-      activeReminderTasks.get(id).stop();
-      activeReminderTasks.delete(id);
+    const paramId = req.params?.id;
+    const id = (paramId && paramId !== 'undefined')
+      ? paramId
+      : (body.id || query.id || null);
+    const ids = normalizeIdList(body.ids || query.ids);
+    const mode = normalizeCancelMode(body.mode || query.mode);
+    const userId = body.userId || query.userId || null;
+    const agentId = body.agentId || req.apiKey?.agentId || query.agentId || null;
+    const conversationId = body.conversationId || query.conversationId || null;
+    const taskType = body.taskType || body.task_type || query.taskType || query.task_type || null;
+    const walletAddress =
+      body.walletAddress ||
+      body.wallet_address ||
+      body.address ||
+      query.walletAddress ||
+      query.wallet_address ||
+      query.address ||
+      null;
+    const onlyActive = normalizeOnlyActive(body.onlyActive ?? query.onlyActive, true);
+
+    const explicitIds = [...new Set([id, ...ids].filter(Boolean))];
+    let candidates = [];
+
+    if (explicitIds.length > 0) {
+      candidates = await fetchReminderCandidates({
+        ids: explicitIds,
+        userId,
+        agentId,
+        conversationId,
+        taskType,
+        walletAddress,
+        onlyActive: false
+      });
+    } else {
+      candidates = await fetchReminderCandidates({
+        ids: [],
+        userId,
+        agentId,
+        conversationId,
+        taskType,
+        walletAddress,
+        onlyActive
+      });
     }
 
-    if (supabase) {
-      await supabase
-        .from('scheduled_chat_reminders')
-        .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-        .eq('id', id)
-        .catch((error) => {
-          throw new Error(error.message);
-        });
+    if (candidates.length === 0) {
+      return res.status(404).json(errorResponse('No matching active reminder found to cancel.'));
     }
 
-    return res.json(successResponse({ id, status: 'cancelled', message: 'Reminder cancelled.' }));
+    const selectedCandidates = mode === 'all' ? candidates : [candidates[0]];
+    const selectedIds = [...new Set(selectedCandidates.map((job) => job.id).filter(Boolean))];
+
+    for (const reminderId of selectedIds) {
+      await cancelReminderById(reminderId);
+    }
+
+    if (selectedIds.length === 1) {
+      return res.json(successResponse({
+        id: selectedIds[0],
+        cancelledIds: selectedIds,
+        cancelledCount: 1,
+        status: 'cancelled',
+        mode,
+        message: 'Reminder cancelled.'
+      }));
+    }
+
+    return res.json(successResponse({
+      cancelledIds: selectedIds,
+      cancelledCount: selectedIds.length,
+      status: 'cancelled',
+      mode,
+      message: `Cancelled ${selectedIds.length} reminder(s).`
+    }));
   } catch (error) {
     console.error('[Reminder] cancelReminder error:', error);
     return res.status(500).json(errorResponse(error.message));

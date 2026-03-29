@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useState, useRef, useEffect } from "react"
 import { useRouter, useParams } from "next/navigation"
-import { Send, Loader2, ChevronDown, ChevronUp, Wrench, ArrowLeft, ArrowRight, CircleDot, Copy, Check, Database, RefreshCw, Link2 } from "lucide-react"
+import { Send, Loader2, ChevronDown, ChevronUp, Wrench, ArrowLeft, ArrowRight, CircleDot, Copy, Check, Database, RefreshCw, Link2, Clock3, BellRing, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -22,7 +22,13 @@ import {
   type AgentAuditLog,
   type AgentAuditLogContent,
 } from "@/lib/agents"
-import { getConversationMessages, sendChatWithMemory } from "@/lib/backend"
+import {
+  cancelReminderJob,
+  getConversationMessages,
+  listRemindersForUser,
+  sendChatWithMemory,
+  type ReminderJob,
+} from "@/lib/backend"
 import type { Agent } from "@/lib/supabase"
 import { useWallets } from "@privy-io/react-auth"
 import { decryptStoredPrivateKey } from "@/lib/lit-private-key"
@@ -34,6 +40,7 @@ const AUDIT_LOG_FETCH_LIMIT = 200
 
 type StorageFilter = "all" | "stored" | "pending" | "failed" | "not_configured"
 type AuditScopeFilter = "all" | "conversation"
+type ReminderScopeFilter = "all" | "conversation"
 
 interface ToolCallInfo {
   tool: string
@@ -655,6 +662,381 @@ function AuditLogsSheet({
   )
 }
 
+function formatReminderTimestamp(value?: string | null): string {
+  if (!value) return "N/A"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+
+  return date.toLocaleString([], {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
+function formatReminderSchedule(expression?: string | null, type?: string | null): string {
+  if (!expression) {
+    return "N/A"
+  }
+
+  const isOneShot = String(type || "").toLowerCase() === "one_shot" || /^\d{4}-\d{2}-\d{2}/.test(expression)
+  if (isOneShot) {
+    const date = new Date(expression)
+    if (!Number.isNaN(date.getTime())) {
+      return `One-shot at ${date.toLocaleString([], {
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      })} (UTC)`
+    }
+    return `One-shot at ${expression}`
+  }
+
+  return `Cron: ${expression} (UTC)`
+}
+
+function getReminderTargetLabel(job: ReminderJob): string {
+  const taskType = String(job.task_type || "").toLowerCase()
+
+  if (taskType === "price") {
+    return job.token_query ? `Token: ${job.token_query}` : "Token: N/A"
+  }
+
+  return job.wallet_address ? `Wallet: ${job.wallet_address}` : "Wallet: N/A"
+}
+
+function getReminderDisplayStatus(job: ReminderJob): string {
+  return String(job.liveStatus || job.status || "unknown")
+}
+
+function getReminderStatusClass(job: ReminderJob): string {
+  const status = getReminderDisplayStatus(job).toLowerCase()
+  if (status === "running" || status === "active") {
+    return "border-emerald-500/40 bg-emerald-500/10 text-emerald-600"
+  }
+  if (status === "pending_reload") {
+    return "border-amber-500/40 bg-amber-500/10 text-amber-600"
+  }
+  if (status === "cancelled" || status === "completed") {
+    return "border-slate-500/40 bg-slate-500/10 text-slate-600"
+  }
+  return "border-border bg-muted/40 text-muted-foreground"
+}
+
+function isReminderCancellable(job: ReminderJob): boolean {
+  const status = String(job.status || "").toLowerCase()
+  const liveStatus = String(job.liveStatus || "").toLowerCase()
+  return status === "active" || liveStatus === "running" || liveStatus === "pending_reload"
+}
+
+function ReminderJobsSheet({
+  open,
+  onOpenChange,
+  agentId,
+  userId,
+  conversationId,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  agentId: string
+  userId?: string
+  conversationId?: string
+}) {
+  const [jobs, setJobs] = useState<ReminderJob[]>([])
+  const [totalCount, setTotalCount] = useState(0)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [scopeFilter, setScopeFilter] = useState<ReminderScopeFilter>("all")
+  const [cancelingId, setCancelingId] = useState<string | null>(null)
+
+  const noConversationSelected = scopeFilter === "conversation" && !conversationId
+
+  const fetchJobs = React.useCallback(
+    async (silent = false) => {
+      if (!open || !userId) {
+        return
+      }
+
+      if (noConversationSelected) {
+        setJobs([])
+        setTotalCount(0)
+        setError(null)
+        if (!silent) {
+          setIsLoading(false)
+        }
+        return
+      }
+
+      if (!silent) {
+        setIsLoading(true)
+      }
+      setError(null)
+
+      try {
+        const response = await listRemindersForUser({
+          userId,
+          agentId,
+        })
+
+        setJobs(response.jobs || [])
+        setTotalCount(response.total || 0)
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Failed to load reminders"
+        setError(message)
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [agentId, noConversationSelected, open, userId]
+  )
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    void fetchJobs()
+  }, [fetchJobs, open])
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    const timerId = window.setInterval(() => {
+      void fetchJobs(true)
+    }, 7000)
+
+    return () => window.clearInterval(timerId)
+  }, [fetchJobs, open])
+
+  const filteredJobs = React.useMemo(() => {
+    if (scopeFilter !== "conversation") {
+      return jobs
+    }
+
+    if (!conversationId) {
+      return []
+    }
+
+    return jobs.filter((job) => job.conversation_id === conversationId)
+  }, [conversationId, jobs, scopeFilter])
+
+  const activeCount = React.useMemo(
+    () => filteredJobs.filter((job) => isReminderCancellable(job)).length,
+    [filteredJobs]
+  )
+
+  const handleCancelReminder = async (job: ReminderJob) => {
+    if (!job.id || !userId || cancelingId) {
+      return
+    }
+
+    setCancelingId(job.id)
+
+    try {
+      const response = await cancelReminderJob({
+        id: job.id,
+        userId,
+        agentId,
+      })
+
+      const count = response.cancelledCount || response.cancelledIds?.length || 1
+      toast({
+        title: count > 1 ? "Reminders cancelled" : "Reminder cancelled",
+        description: count > 1
+          ? `${count} reminder jobs were cancelled.`
+          : `Reminder ${job.id} was cancelled.`,
+      })
+
+      await fetchJobs(true)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to cancel reminder"
+      toast({
+        title: "Cancel failed",
+        description: message,
+        variant: "destructive",
+      })
+    } finally {
+      setCancelingId(null)
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-full min-h-0 gap-0 p-0 sm:max-w-xl">
+        <SheetHeader className="border-b border-border pb-3">
+          <div className="flex items-center justify-between gap-2 pr-8">
+            <div>
+              <SheetTitle className="flex items-center gap-2 text-base">
+                <BellRing className="h-4 w-4" />
+                Reminder Jobs
+              </SheetTitle>
+              <SheetDescription>
+                Monitor active timers/cron reminders and cancel them directly.
+              </SheetDescription>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={() => void fetchJobs()}
+              disabled={isLoading || !userId}
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
+              Refresh
+            </Button>
+          </div>
+
+          <div className="space-y-3 pt-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Button
+                type="button"
+                variant={scopeFilter === "all" ? "default" : "outline"}
+                size="sm"
+                className="h-7 text-[11px]"
+                onClick={() => setScopeFilter("all")}
+              >
+                All Jobs
+              </Button>
+              <Button
+                type="button"
+                variant={scopeFilter === "conversation" ? "default" : "outline"}
+                size="sm"
+                className="h-7 text-[11px]"
+                onClick={() => setScopeFilter("conversation")}
+              >
+                This Chat
+              </Button>
+              {!conversationId && scopeFilter === "conversation" && (
+                <span className="text-[11px] text-muted-foreground">
+                  Start a chat first to filter by conversation.
+                </span>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+              <span>Rows loaded: {filteredJobs.length}</span>
+              <span>Total matching query: {totalCount}</span>
+              <Badge variant="outline" className="h-5 border-emerald-500/40 bg-emerald-500/10 text-emerald-600">
+                {activeCount} active
+              </Badge>
+            </div>
+          </div>
+        </SheetHeader>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 space-y-3">
+          {isLoading && filteredJobs.length === 0 && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading reminders...
+            </div>
+          )}
+
+          {error && (
+            <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-600">
+              {error}
+            </div>
+          )}
+
+          {!isLoading && !error && filteredJobs.length === 0 && (
+            <div className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+              {noConversationSelected
+                ? "No conversation selected yet. Send one message and try again."
+                : "No reminder jobs found for the selected scope."}
+            </div>
+          )}
+
+          {filteredJobs.map((job) => {
+            const cancellable = isReminderCancellable(job)
+            const isCanceling = cancelingId === job.id
+            const displayStatus = getReminderDisplayStatus(job)
+
+            return (
+              <div key={job.id} className="rounded-md border border-border bg-background px-3 py-3 space-y-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Badge variant="outline" className="h-5 text-[10px] font-mono px-1.5">
+                        {job.task_type || "reminder"}
+                      </Badge>
+                      <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                        {job.type || "recurring"}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className={cn("h-5 px-1.5 text-[10px]", getReminderStatusClass(job))}
+                      >
+                        {displayStatus}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground break-all">{job.id}</p>
+                  </div>
+
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="destructive"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={() => void handleCancelReminder(job)}
+                    disabled={!cancellable || isCanceling || !userId}
+                  >
+                    {isCanceling ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <>
+                        <X className="mr-1 h-3.5 w-3.5" />
+                        Cancel
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                  <div className="rounded-md border border-border bg-muted/20 p-2">
+                    <p className="uppercase tracking-wider text-[10px] text-muted-foreground">Schedule</p>
+                    <p className="mt-1 wrap-break-word">{formatReminderSchedule(job.cron_expression, job.type)}</p>
+                  </div>
+                  <div className="rounded-md border border-border bg-muted/20 p-2">
+                    <p className="uppercase tracking-wider text-[10px] text-muted-foreground">Target</p>
+                    <p className="mt-1 break-all">{getReminderTargetLabel(job)}</p>
+                  </div>
+                  <div className="rounded-md border border-border bg-muted/20 p-2">
+                    <p className="uppercase tracking-wider text-[10px] text-muted-foreground">Created</p>
+                    <p className="mt-1">{formatReminderTimestamp(job.created_at)}</p>
+                  </div>
+                  <div className="rounded-md border border-border bg-muted/20 p-2">
+                    <p className="uppercase tracking-wider text-[10px] text-muted-foreground">Last Run</p>
+                    <p className="mt-1">{formatReminderTimestamp(job.last_run_at)}</p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                  <span>Runs: {job.run_count ?? 0}</span>
+                  {job.label && <span>Label: {job.label}</span>}
+                </div>
+
+                {job.last_error && (
+                  <div className="rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-xs text-red-600">
+                    Last error: {job.last_error}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
 function formatContent(content: string): string {
   // Clean up AI thinking / reasoning that leaks into the response
   let cleaned = content
@@ -698,6 +1080,7 @@ export default function AgentChatPage() {
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [isAuditSheetOpen, setIsAuditSheetOpen] = useState(false)
+  const [isReminderSheetOpen, setIsReminderSheetOpen] = useState(false)
   const [conversationId, setConversationId] = useState<string | undefined>(undefined)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -1021,6 +1404,17 @@ export default function AgentChatPage() {
                 variant="outline"
                 size="sm"
                 className="h-7 gap-1.5 px-2 text-[11px]"
+                onClick={() => setIsReminderSheetOpen(true)}
+                disabled={!dbUser?.id}
+              >
+                <Clock3 className="h-3.5 w-3.5" />
+                Reminders
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 px-2 text-[11px]"
                 onClick={() => setIsAuditSheetOpen(true)}
                 disabled={!dbUser?.id}
               >
@@ -1140,6 +1534,14 @@ export default function AgentChatPage() {
       <AuditLogsSheet
         open={isAuditSheetOpen}
         onOpenChange={setIsAuditSheetOpen}
+        agentId={agent.id}
+        userId={dbUser?.id}
+        conversationId={conversationId}
+      />
+
+      <ReminderJobsSheet
+        open={isReminderSheetOpen}
+        onOpenChange={setIsReminderSheetOpen}
         agentId={agent.id}
         userId={dbUser?.id}
         conversationId={conversationId}

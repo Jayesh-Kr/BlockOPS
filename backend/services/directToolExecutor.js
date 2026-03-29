@@ -57,6 +57,128 @@ function extractEmailFromText(text = '') {
   return match ? match[0] : null;
 }
 
+function extractReminderTaskTypeFromText(text = '') {
+  const lower = String(text || '').toLowerCase();
+  if (/\bportfolio\b/.test(lower)) return 'portfolio';
+  if (/\bprice\b|\btoken\b/.test(lower)) return 'price';
+  if (/\bbalance\b/.test(lower)) return 'balance';
+  return null;
+}
+
+function wantsBulkReminderCancellation(text = '') {
+  return /\b(all|every|each|both|all of them|cancel reminders|stop reminders)\b/i.test(String(text || ''));
+}
+
+function normalizeReminderIdList(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || '').trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function isOneShotReminderExpression(expression = '') {
+  return /^\d{4}-\d{2}-\d{2}/.test(String(expression || ''));
+}
+
+function extractReminderJobsFromListPayload(payload = {}) {
+  if (Array.isArray(payload?.jobs)) return payload.jobs;
+  if (Array.isArray(payload?.result?.jobs)) return payload.result.jobs;
+  return [];
+}
+
+function inferReminderCancelTargets(previousResults = [], fallbackMessage = '', existingParams = {}) {
+  const latestListResult = [...previousResults]
+    .reverse()
+    .find((result) => result?.tool === 'list_reminders' && result?.success);
+
+  if (!latestListResult) {
+    return null;
+  }
+
+  const listedJobs = extractReminderJobsFromListPayload(latestListResult.result || {});
+  if (!listedJobs.length) {
+    return null;
+  }
+
+  const activeJobs = listedJobs.filter((job) => {
+    const liveStatus = String(job?.liveStatus || '').toLowerCase();
+    return job?.status === 'active' || liveStatus === 'running' || liveStatus === 'pending_reload';
+  });
+
+  const candidatePool = activeJobs.length ? activeJobs : listedJobs;
+  let filteredJobs = candidatePool;
+
+  const desiredTaskType = existingParams.taskType || extractReminderTaskTypeFromText(fallbackMessage);
+  if (desiredTaskType) {
+    filteredJobs = filteredJobs.filter((job) => String(job?.task_type || '').toLowerCase() === desiredTaskType);
+  }
+
+  const desiredWalletAddress =
+    existingParams.walletAddress ||
+    existingParams.wallet_address ||
+    extractAddressFromText(fallbackMessage);
+  if (desiredWalletAddress) {
+    filteredJobs = filteredJobs.filter(
+      (job) => String(job?.wallet_address || '').toLowerCase() === String(desiredWalletAddress).toLowerCase()
+    );
+  }
+
+  const preferRecurring = /\b(recurring|recursive|cron|every)\b/i.test(String(fallbackMessage || ''));
+  const preferOneShot = /\b(one[\s-]?shot|once|single time)\b/i.test(String(fallbackMessage || ''));
+
+  if (preferRecurring) {
+    const recurringJobs = filteredJobs.filter(
+      (job) => String(job?.type || '').toLowerCase() === 'recurring' || !isOneShotReminderExpression(job?.cron_expression)
+    );
+    if (recurringJobs.length) {
+      filteredJobs = recurringJobs;
+    }
+  } else if (preferOneShot) {
+    const oneShotJobs = filteredJobs.filter(
+      (job) => String(job?.type || '').toLowerCase() === 'one_shot' || isOneShotReminderExpression(job?.cron_expression)
+    );
+    if (oneShotJobs.length) {
+      filteredJobs = oneShotJobs;
+    }
+  }
+
+  if (!filteredJobs.length) {
+    filteredJobs = candidatePool;
+  }
+
+  const mode = existingParams.mode || (wantsBulkReminderCancellation(fallbackMessage) ? 'all' : 'latest');
+  if (mode === 'all') {
+    const ids = filteredJobs.map((job) => job?.id).filter(Boolean);
+    if (!ids.length) return null;
+
+    return {
+      mode,
+      ids,
+      taskType: desiredTaskType || null,
+      walletAddress: desiredWalletAddress || null
+    };
+  }
+
+  const chosen = filteredJobs[0];
+  if (!chosen?.id) {
+    return null;
+  }
+
+  return {
+    mode,
+    id: chosen.id,
+    taskType: desiredTaskType || null,
+    walletAddress: desiredWalletAddress || null
+  };
+}
+
 function isLikelyPlaceholderValue(value) {
   if (typeof value !== 'string') return false;
   return /\$\$?\w+\.[A-Za-z0-9_.]+/.test(value) || /\{\{.*\}\}|\{.*\}/.test(value);
@@ -590,8 +712,28 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
     }
     case 'cancel_reminder': {
       const id = params.id || params.reminderId || params.jobId || params.job_id;
-      mapped = { id };
-      if (!id) missing.push('id');
+      const ids = normalizeReminderIdList(params.ids || params.reminderIds || params.jobIds || params.job_ids);
+      const userId = params.userId || executionContext.userId || null;
+      const agentId = params.agentId || executionContext.agentId || null;
+      const conversationId = params.conversationId || executionContext.conversationId || null;
+      const taskType = params.taskType || params.task_type || extractReminderTaskTypeFromText(fallbackMessage);
+      const walletAddress = params.walletAddress || params.wallet_address || params.address || contextualAddress || null;
+      const mode = params.mode || (wantsBulkReminderCancellation(fallbackMessage) ? 'all' : 'latest');
+
+      mapped = {
+        id,
+        ids,
+        userId,
+        agentId,
+        conversationId,
+        taskType,
+        walletAddress,
+        mode
+      };
+
+      const hasAnyId = Boolean(id) || ids.length > 0;
+      const hasFilterContext = Boolean(userId || agentId || conversationId || taskType || walletAddress);
+      if (!hasAnyId && !hasFilterContext) missing.push('id');
       break;
     }
     case 'list_schedules': {
@@ -813,10 +955,17 @@ async function executeReminderToolLocally(tool, mapped) {
 
   if (tool === 'cancel_reminder') {
     return invokeLocalController(cancelReminder, {
-      body: {},
-      query: {},
+      body: { ...mapped },
+      query: {
+        userId: mapped.userId || undefined,
+        agentId: mapped.agentId || undefined,
+        conversationId: mapped.conversationId || undefined,
+        taskType: mapped.taskType || undefined,
+        walletAddress: mapped.walletAddress || undefined,
+        mode: mapped.mode || undefined
+      },
       params: { id: mapped.id },
-      apiKey: null
+      apiKey: mapped.agentId ? { agentId: mapped.agentId } : null
     });
   }
 
@@ -1208,6 +1357,52 @@ function interpolateStepParameters(step, previousResults, fallbackMessage = '', 
     }
   }
 
+  if (tool === 'cancel_reminder') {
+    if (!interpolated.userId && executionContext.userId) {
+      interpolated.userId = executionContext.userId;
+    }
+    if (!interpolated.agentId && executionContext.agentId) {
+      interpolated.agentId = executionContext.agentId;
+    }
+    if (!interpolated.conversationId && executionContext.conversationId) {
+      interpolated.conversationId = executionContext.conversationId;
+    }
+    if (!interpolated.taskType) {
+      const inferredTaskType = extractReminderTaskTypeFromText(fallbackMessage);
+      if (inferredTaskType) {
+        interpolated.taskType = inferredTaskType;
+      }
+    }
+    if (!interpolated.walletAddress) {
+      const inferredAddress = extractAddressFromText(fallbackMessage);
+      if (inferredAddress) {
+        interpolated.walletAddress = inferredAddress;
+      }
+    }
+
+    const explicitIds = normalizeReminderIdList(interpolated.ids);
+    const hasExplicitTarget = Boolean(interpolated.id) || explicitIds.length > 0;
+
+    if (!hasExplicitTarget) {
+      const inferredTargets = inferReminderCancelTargets(previousResults, fallbackMessage, interpolated);
+      if (inferredTargets?.id && !interpolated.id) {
+        interpolated.id = inferredTargets.id;
+      }
+      if (!interpolated.ids && Array.isArray(inferredTargets?.ids) && inferredTargets.ids.length > 0) {
+        interpolated.ids = inferredTargets.ids;
+      }
+      if (!interpolated.mode && inferredTargets?.mode) {
+        interpolated.mode = inferredTargets.mode;
+      }
+      if (!interpolated.taskType && inferredTargets?.taskType) {
+        interpolated.taskType = inferredTargets.taskType;
+      }
+      if (!interpolated.walletAddress && inferredTargets?.walletAddress) {
+        interpolated.walletAddress = inferredTargets.walletAddress;
+      }
+    }
+  }
+
   if (tool === 'send_email') {
     const generated = generateEmailFromPreviousResults(previousResults, fallbackMessage);
 
@@ -1418,7 +1613,14 @@ function formatToolResponse(toolResults) {
         return `Found ${count} reminder job(s), ${active} active.`;
       }
       case 'cancel_reminder': {
-        return `Reminder ${payload.id} has been cancelled.`;
+        const cancelledIds = Array.isArray(payload.cancelledIds)
+          ? payload.cancelledIds
+          : (Array.isArray(payload.ids) ? payload.ids : []);
+        if (cancelledIds.length > 1) {
+          return `Cancelled ${cancelledIds.length} reminders.`;
+        }
+        const cancelledId = payload.id || cancelledIds[0] || 'unknown';
+        return `Reminder ${cancelledId} has been cancelled.`;
       }
       case 'list_schedules': {
         const count = payload.total || 0;

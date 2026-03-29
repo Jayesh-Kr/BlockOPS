@@ -13,8 +13,39 @@ import type {
 } from './types'
 
 // Backend URLs from environment
-const AI_AGENT_BACKEND_URL = process.env.NEXT_PUBLIC_AI_AGENT_BACKEND_URL || 'http://localhost:8000'
-const BLOCKCHAIN_BACKEND_URL = process.env.NEXT_PUBLIC_BLOCKCHAIN_BACKEND_URL || 'http://localhost:3000'
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, '')
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+}
+
+function resolveRuntimeBackendUrl(configuredUrl: string | undefined, fallbackPort: number): string {
+  const fallback = `http://localhost:${fallbackPort}`
+  const candidate = trimTrailingSlash(configuredUrl || fallback)
+
+  if (typeof window === 'undefined') {
+    return candidate
+  }
+
+  try {
+    const parsed = new URL(candidate)
+    const browserHost = window.location.hostname
+
+    if (isLoopbackHost(parsed.hostname) && !isLoopbackHost(browserHost)) {
+      parsed.hostname = browserHost
+      return trimTrailingSlash(parsed.toString())
+    }
+
+    return trimTrailingSlash(parsed.toString())
+  } catch {
+    return candidate
+  }
+}
+
+const AI_AGENT_BACKEND_URL = resolveRuntimeBackendUrl(process.env.NEXT_PUBLIC_AI_AGENT_BACKEND_URL, 8000)
+const BLOCKCHAIN_BACKEND_URL = resolveRuntimeBackendUrl(process.env.NEXT_PUBLIC_BLOCKCHAIN_BACKEND_URL, 3000)
 
 // ============================================
 // CONVERSATION MEMORY API (Port 3000)
@@ -90,6 +121,44 @@ export interface ConversationMessage {
   created_at: string
 }
 
+export interface ReminderJob {
+  id: string
+  agent_id?: string | null
+  user_id?: string | null
+  conversation_id?: string | null
+  delivery_platform?: 'web' | 'telegram' | string
+  telegram_chat_id?: string | null
+  task_type?: 'balance' | 'portfolio' | 'price' | string
+  wallet_address?: string | null
+  token_query?: string | null
+  cron_expression?: string | null
+  label?: string | null
+  type?: 'one_shot' | 'recurring' | string
+  status?: string
+  run_count?: number
+  last_run_at?: string | null
+  last_error?: string | null
+  last_result_summary?: string | null
+  created_at?: string
+  liveStatus?: string
+}
+
+export interface ListRemindersResponse {
+  success: boolean
+  jobs: ReminderJob[]
+  total: number
+}
+
+export interface CancelReminderResponse {
+  success: boolean
+  id?: string
+  cancelledIds?: string[]
+  cancelledCount?: number
+  status?: string
+  mode?: 'latest' | 'all' | string
+  message?: string
+}
+
 /**
  * Send a chat message with conversation memory
  * Uses the Node.js backend (port 3000) with Supabase
@@ -144,6 +213,55 @@ export async function getConversationMessages(
   
   if (!response.ok) {
     throw new Error('Failed to get conversation messages')
+  }
+
+  return response.json()
+}
+
+/**
+ * List reminder jobs for the current user/agent
+ */
+export async function listRemindersForUser(params: {
+  userId: string
+  agentId?: string
+}): Promise<ListRemindersResponse> {
+  const searchParams = new URLSearchParams()
+  searchParams.set('userId', params.userId)
+  if (params.agentId) {
+    searchParams.set('agentId', params.agentId)
+  }
+
+  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/reminders?${searchParams.toString()}`)
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ error: 'Failed to list reminders' }))
+    throw new Error(payload.error || `Request failed with status ${response.status}`)
+  }
+
+  return response.json()
+}
+
+/**
+ * Cancel reminder job by id
+ */
+export async function cancelReminderJob(params: {
+  id: string
+  userId?: string
+  agentId?: string
+}): Promise<CancelReminderResponse> {
+  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/reminders/${params.id}`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      userId: params.userId,
+      agentId: params.agentId,
+    }),
+  })
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ error: 'Failed to cancel reminder' }))
+    throw new Error(payload.error || `Request failed with status ${response.status}`)
   }
 
   return response.json()
