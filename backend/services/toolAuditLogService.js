@@ -256,6 +256,22 @@ async function persistAuditLog(record) {
     .single();
 }
 
+function resolveFilecoinArchivePrivateKey(filecoinPrivateKey = null) {
+  const explicitKey =
+    typeof filecoinPrivateKey === 'string' && filecoinPrivateKey.trim()
+      ? filecoinPrivateKey.trim()
+      : null;
+  const configuredKey =
+    typeof process.env.FILECOIN_WALLET_PRIVATE_KEY === 'string' &&
+    process.env.FILECOIN_WALLET_PRIVATE_KEY.trim()
+      ? process.env.FILECOIN_WALLET_PRIVATE_KEY.trim()
+      : null;
+
+  // Prefer the dedicated Calibration wallet from env so audit logging does not
+  // accidentally reuse an Arbitrum/Lit transaction signer that is unfunded on Filecoin.
+  return configuredKey || explicitKey || null;
+}
+
 async function archiveToolExecutionLogs({
   agentId,
   userId,
@@ -280,6 +296,7 @@ async function archiveToolExecutionLogs({
 
   const executionMode = toolResults?.execution_mode || 'agent_backend';
   const entries = [];
+  const archivePrivateKey = resolveFilecoinArchivePrivateKey(filecoinPrivateKey);
 
   for (let index = 0; index < total; index += 1) {
     const toolCall = toolCalls[index] || {};
@@ -316,11 +333,7 @@ async function archiveToolExecutionLogs({
       namespace: 'blockops-tool-execution',
       name: `tool-execution-${agentId}-${Date.now()}-${index + 1}`,
       metadata: { tool: toolName, userId: String(userId) },
-      privateKey:
-        filecoinPrivateKey ||
-        toolCall?.parameters?.privateKey ||
-        toolCall?.parameters?.private_key ||
-        null
+      privateKey: archivePrivateKey
     });
 
     if (filecoin?.prepareTxHash) {
