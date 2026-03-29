@@ -3,6 +3,38 @@ import type { Agent } from './supabase'
 
 type ToolConfig = Array<{ tool: string; next_tool: string | null }>
 
+export interface AgentAuditLog {
+  id: string
+  agent_id: string
+  user_id: string
+  conversation_id: string | null
+  message_excerpt: string | null
+  execution_mode: string
+  tool_name: string
+  tool_index: number | null
+  chain: string | null
+  params_sanitized: Record<string, unknown>
+  result_summary: Record<string, unknown>
+  raw_result: unknown
+  success: boolean
+  tx_hash: string | null
+  amount: string | null
+  filecoin_cid: string | null
+  filecoin_uri: string | null
+  filecoin_provider: string | null
+  storage_status: string
+  storage_error: string | null
+  created_at: string
+}
+
+export interface ListAgentAuditLogsParams {
+  userId: string
+  conversationId?: string
+  tool?: string
+  success?: boolean
+  limit?: number
+}
+
 async function parseJson(response: Response) {
   return response.json().catch(() => ({}))
 }
@@ -109,5 +141,42 @@ export async function deleteAgent(agentId: string): Promise<void> {
 
   if (!response.ok || !payload.success) {
     throw new Error(`Failed to delete agent: ${payload.error || `Request failed with status ${response.status}`}`)
+  }
+}
+
+export async function listAgentAuditLogs(
+  agentId: string,
+  params: ListAgentAuditLogsParams
+): Promise<{ logs: AgentAuditLog[]; count: number }> {
+  const query = new URLSearchParams({ userId: params.userId })
+
+  if (params.conversationId) {
+    query.set('conversationId', params.conversationId)
+  }
+
+  if (params.tool) {
+    query.set('tool', params.tool)
+  }
+
+  if (typeof params.success === 'boolean') {
+    query.set('success', String(params.success))
+  }
+
+  if (typeof params.limit === 'number' && Number.isFinite(params.limit) && params.limit > 0) {
+    query.set('limit', String(Math.floor(params.limit)))
+  }
+
+  const response = await fetch(
+    `${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}/audit-logs?${query.toString()}`
+  )
+  const payload = await parseJson(response)
+
+  if (!response.ok || !payload.success) {
+    throw new Error(`Failed to fetch audit logs: ${payload.error || `Request failed with status ${response.status}`}`)
+  }
+
+  return {
+    logs: Array.isArray(payload.logs) ? (payload.logs as AgentAuditLog[]) : [],
+    count: typeof payload.count === 'number' ? payload.count : 0,
   }
 }

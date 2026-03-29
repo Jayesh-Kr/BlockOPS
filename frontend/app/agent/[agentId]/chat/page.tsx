@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useState, useRef, useEffect } from "react"
 import { useRouter, useParams } from "next/navigation"
-import { Send, Loader2, ChevronDown, ChevronUp, Wrench, ArrowLeft, ArrowRight, CircleDot, Copy, Check } from "lucide-react"
+import { Send, Loader2, ChevronDown, ChevronUp, Wrench, ArrowLeft, ArrowRight, CircleDot, Copy, Check, Database, RefreshCw, Link2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -11,19 +11,23 @@ import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
 import { toast } from "@/components/ui/use-toast"
 import { UserProfile } from "@/components/user-profile"
 import { useAuth } from "@/lib/auth"
-import { getAgentById } from "@/lib/agents"
+import { getAgentById, listAgentAuditLogs, type AgentAuditLog } from "@/lib/agents"
 import { sendChatWithMemory } from "@/lib/backend"
 import type { Agent } from "@/lib/supabase"
-import type { AgentChatResponse } from "@/lib/types"
-import { ethers } from "ethers"
 import { useWallets } from "@privy-io/react-auth"
 import { decryptStoredPrivateKey } from "@/lib/lit-private-key"
+import { BrowserProvider } from "ethers"
 
 const DEFAULT_EMAIL_RECIPIENT_KEY = "blockops.defaultEmailRecipient"
+const AUDIT_LOG_FETCH_LIMIT = 200
+
+type StorageFilter = "all" | "stored" | "pending" | "failed" | "not_configured"
+type AuditScopeFilter = "all" | "conversation"
 
 interface ToolCallInfo {
   tool: string
@@ -89,7 +93,7 @@ function ToolDetailsView({ toolResults }: { toolResults: ToolResults }) {
                 </div>
                 <div className="p-2 overflow-hidden">
                   <span className="text-[9px] uppercase tracking-wider text-muted-foreground font-medium">Response</span>
-                  <div className="mt-1 max-h-[160px] overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border">
+                  <div className="mt-1 max-h-40 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border">
                     <pre className="text-[10px] font-mono text-foreground/80 whitespace-pre-wrap break-all leading-relaxed">
                       {result?.error
                         ? JSON.stringify({ error: result.error }, null, 2)
@@ -103,6 +107,445 @@ function ToolDetailsView({ toolResults }: { toolResults: ToolResults }) {
         })}
       </CollapsibleContent>
     </Collapsible>
+  )
+}
+
+function formatAuditTimestamp(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+
+  return date.toLocaleString([], {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+}
+
+function truncateMiddle(value: string, head = 12, tail = 10): string {
+  if (value.length <= head + tail + 3) {
+    return value
+  }
+  return `${value.slice(0, head)}...${value.slice(-tail)}`
+}
+
+function stringifyValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "N/A"
+  }
+
+  if (typeof value === "string") {
+    return value
+  }
+
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function getStorageBadgeClass(status: string): string {
+  switch (status) {
+    case "stored":
+      return "border-emerald-500/40 bg-emerald-500/10 text-emerald-600"
+    case "pending":
+      return "border-amber-500/40 bg-amber-500/10 text-amber-600"
+    case "failed":
+      return "border-red-500/40 bg-red-500/10 text-red-600"
+    case "not_configured":
+      return "border-slate-500/40 bg-slate-500/10 text-slate-600"
+    default:
+      return "border-border bg-muted/40 text-muted-foreground"
+  }
+}
+
+function AuditDetailField({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string
+  value: React.ReactNode
+  mono?: boolean
+}) {
+  return (
+    <div className="rounded-md border border-border bg-muted/20 p-2">
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
+      <div className={cn("mt-1 text-[11px] break-all", mono && "font-mono")}>{value}</div>
+    </div>
+  )
+}
+
+function AuditJsonBlock({ title, value }: { title: string; value: unknown }) {
+  if (value === null || value === undefined) {
+    return null
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{title}</p>
+      <pre className="max-h-55 overflow-auto rounded-md border border-border bg-muted/30 p-2 text-[10px] leading-relaxed font-mono">
+        {stringifyValue(value)}
+      </pre>
+    </div>
+  )
+}
+
+function AuditLogsSheet({
+  open,
+  onOpenChange,
+  agentId,
+  userId,
+  conversationId,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  agentId: string
+  userId?: string
+  conversationId?: string
+}) {
+  const [logs, setLogs] = useState<AgentAuditLog[]>([])
+  const [totalCount, setTotalCount] = useState(0)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [storageFilter, setStorageFilter] = useState<StorageFilter>("all")
+  const [scopeFilter, setScopeFilter] = useState<AuditScopeFilter>("all")
+  const [toolFilter, setToolFilter] = useState<string>("all")
+  const [expandedById, setExpandedById] = useState<Record<string, boolean>>({})
+
+  const noConversationSelected = scopeFilter === "conversation" && !conversationId
+
+  const fetchLogs = React.useCallback(
+    async (silent = false) => {
+      if (!open || !userId) {
+        return
+      }
+
+      if (noConversationSelected) {
+        setLogs([])
+        setTotalCount(0)
+        setError(null)
+        if (!silent) {
+          setIsLoading(false)
+        }
+        return
+      }
+
+      if (!silent) {
+        setIsLoading(true)
+      }
+      setError(null)
+
+      try {
+        const response = await listAgentAuditLogs(agentId, {
+          userId,
+          conversationId: scopeFilter === "conversation" ? conversationId : undefined,
+          tool: toolFilter !== "all" ? toolFilter : undefined,
+          limit: AUDIT_LOG_FETCH_LIMIT,
+        })
+
+        setLogs(response.logs)
+        setTotalCount(response.count)
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Failed to load audit logs"
+        setError(message)
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [agentId, conversationId, noConversationSelected, open, scopeFilter, toolFilter, userId]
+  )
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    void fetchLogs()
+  }, [fetchLogs, open])
+
+  const pendingCount = React.useMemo(
+    () => logs.filter((log) => log.storage_status === "pending").length,
+    [logs]
+  )
+
+  useEffect(() => {
+    if (!open || pendingCount === 0) {
+      return
+    }
+
+    const timerId = window.setInterval(() => {
+      void fetchLogs(true)
+    }, 7000)
+
+    return () => window.clearInterval(timerId)
+  }, [fetchLogs, open, pendingCount])
+
+  const availableTools = React.useMemo(() => {
+    const set = new Set<string>()
+    logs.forEach((log) => {
+      if (log.tool_name) {
+        set.add(log.tool_name)
+      }
+    })
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [logs])
+
+  useEffect(() => {
+    if (toolFilter === "all") {
+      return
+    }
+
+    if (!availableTools.includes(toolFilter)) {
+      setToolFilter("all")
+    }
+  }, [availableTools, toolFilter])
+
+  const filteredLogs = React.useMemo(() => {
+    if (storageFilter === "all") {
+      return logs
+    }
+
+    return logs.filter((log) => log.storage_status === storageFilter)
+  }, [logs, storageFilter])
+
+  const storageFilterOptions: Array<{ value: StorageFilter; label: string }> = [
+    { value: "all", label: "All" },
+    { value: "stored", label: "Stored" },
+    { value: "pending", label: "Pending" },
+    { value: "failed", label: "Failed" },
+    { value: "not_configured", label: "Not Config" },
+  ]
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-full sm:max-w-2xl p-0">
+        <SheetHeader className="border-b border-border pb-3">
+          <div className="flex items-center justify-between gap-2 pr-8">
+            <div>
+              <SheetTitle className="flex items-center gap-2 text-base">
+                <Database className="h-4 w-4" />
+                Tool Audit Logs
+              </SheetTitle>
+              <SheetDescription>
+                View persisted Filecoin and execution details for every tool call.
+              </SheetDescription>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={() => void fetchLogs()}
+              disabled={isLoading || !userId}
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
+              Refresh
+            </Button>
+          </div>
+
+          <div className="space-y-3 pt-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Button
+                type="button"
+                variant={scopeFilter === "all" ? "default" : "outline"}
+                size="sm"
+                className="h-7 text-[11px]"
+                onClick={() => setScopeFilter("all")}
+              >
+                All Conversations
+              </Button>
+              <Button
+                type="button"
+                variant={scopeFilter === "conversation" ? "default" : "outline"}
+                size="sm"
+                className="h-7 text-[11px]"
+                onClick={() => setScopeFilter("conversation")}
+              >
+                This Chat
+              </Button>
+              {!conversationId && scopeFilter === "conversation" && (
+                <span className="text-[11px] text-muted-foreground">
+                  Start a chat first to filter by conversation.
+                </span>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              {storageFilterOptions.map((option) => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  variant={storageFilter === option.value ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-7 text-[11px]"
+                  onClick={() => setStorageFilter(option.value)}
+                >
+                  {option.label}
+                </Button>
+              ))}
+
+              <select
+                className="h-7 rounded-md border border-border bg-background px-2 text-[11px]"
+                value={toolFilter}
+                onChange={(event) => setToolFilter(event.target.value)}
+              >
+                <option value="all">All tools</option>
+                {availableTools.map((tool) => (
+                  <option key={tool} value={tool}>
+                    {tool}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+              <span>Rows loaded: {logs.length}</span>
+              <span>Total matching query: {totalCount}</span>
+              {pendingCount > 0 && (
+                <Badge variant="outline" className="h-5 border-amber-500/40 bg-amber-500/10 text-amber-600">
+                  {pendingCount} pending (auto-refresh active)
+                </Badge>
+              )}
+            </div>
+          </div>
+        </SheetHeader>
+
+        <ScrollArea className="flex-1 px-4 py-4">
+          {isLoading && logs.length === 0 && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading audit logs...
+            </div>
+          )}
+
+          {error && (
+            <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-600">
+              {error}
+            </div>
+          )}
+
+          {!isLoading && !error && filteredLogs.length === 0 && (
+            <div className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+              {noConversationSelected
+                ? "No conversation selected yet. Send one message and try again."
+                : "No audit logs found for the selected filters."}
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {filteredLogs.map((log) => {
+              const isExpanded = Boolean(expandedById[log.id])
+
+              return (
+                <Collapsible
+                  key={log.id}
+                  open={isExpanded}
+                  onOpenChange={(nextOpen) =>
+                    setExpandedById((prev) => ({
+                      ...prev,
+                      [log.id]: nextOpen,
+                    }))
+                  }
+                  className="rounded-md border border-border overflow-hidden"
+                >
+                  <CollapsibleTrigger asChild>
+                    <button
+                      type="button"
+                      className="w-full bg-background px-3 py-2.5 text-left hover:bg-muted/20 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Badge variant="outline" className="h-5 text-[10px] font-mono px-1.5">
+                              {log.tool_name}
+                            </Badge>
+                            <Badge
+                              variant={log.success ? "secondary" : "destructive"}
+                              className="h-5 px-1.5 text-[10px]"
+                            >
+                              {log.success ? "success" : "failed"}
+                            </Badge>
+                            <Badge
+                              variant="outline"
+                              className={cn("h-5 px-1.5 text-[10px]", getStorageBadgeClass(log.storage_status))}
+                            >
+                              {log.storage_status}
+                            </Badge>
+                            {log.chain && (
+                              <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                                {log.chain}
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="mt-1 text-[11px] text-muted-foreground">{formatAuditTimestamp(log.created_at)}</p>
+                          {log.message_excerpt && (
+                            <p className="mt-1 text-xs text-muted-foreground wrap-break-word">{log.message_excerpt}</p>
+                          )}
+                        </div>
+                        {isExpanded ? (
+                          <ChevronUp className="mt-1 h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronDown className="mt-1 h-4 w-4 text-muted-foreground" />
+                        )}
+                      </div>
+                    </button>
+                  </CollapsibleTrigger>
+
+                  <CollapsibleContent className="border-t border-border bg-muted/10 px-3 py-3 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <AuditDetailField label="Log ID" value={log.id} mono />
+                      <AuditDetailField label="Conversation" value={log.conversation_id || "N/A"} mono />
+                      <AuditDetailField label="Execution Mode" value={log.execution_mode || "N/A"} />
+                      <AuditDetailField label="Tool Index" value={log.tool_index ?? "N/A"} />
+                      <AuditDetailField label="Transaction Hash" value={log.tx_hash || "N/A"} mono />
+                      <AuditDetailField label="Amount" value={log.amount || "N/A"} mono />
+                      <AuditDetailField
+                        label="Filecoin CID"
+                        value={log.filecoin_cid ? truncateMiddle(log.filecoin_cid) : "N/A"}
+                        mono
+                      />
+                      <AuditDetailField
+                        label="Filecoin URI"
+                        value={
+                          log.filecoin_uri ? (
+                            <a
+                              href={log.filecoin_uri}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-xs underline underline-offset-2"
+                            >
+                              <Link2 className="h-3 w-3" />
+                              {truncateMiddle(log.filecoin_uri, 18, 16)}
+                            </a>
+                          ) : (
+                            "N/A"
+                          )
+                        }
+                      />
+                      <AuditDetailField label="Filecoin Provider" value={log.filecoin_provider || "N/A"} />
+                      <AuditDetailField label="Storage Error" value={log.storage_error || "N/A"} />
+                    </div>
+
+                    <AuditJsonBlock title="Sanitized Params" value={log.params_sanitized} />
+                    <AuditJsonBlock title="Result Summary" value={log.result_summary} />
+                    <AuditJsonBlock title="Raw Result" value={log.raw_result} />
+                    <AuditJsonBlock title="Full Stored Row" value={log} />
+                  </CollapsibleContent>
+                </Collapsible>
+              )
+            })}
+          </div>
+        </ScrollArea>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -148,6 +591,7 @@ export default function AgentChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [isAuditSheetOpen, setIsAuditSheetOpen] = useState(false)
   const [conversationId, setConversationId] = useState<string | undefined>(undefined)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -162,11 +606,16 @@ export default function AgentChatPage() {
       const wallet = wallets[0]
       await wallet.switchChain(421614) // Arbitrum Sepolia
 
-      const provider = await wallet.getEthersProvider()
-      const signer = provider.getSigner()
+      const ethereumProvider = await wallet.getEthereumProvider()
+      const provider = new BrowserProvider(ethereumProvider)
+      const signer = await provider.getSigner()
 
       const tx = await signer.sendTransaction(txData.transaction)
       const receipt = await tx.wait()
+
+      if (!receipt) {
+        throw new Error("Transaction receipt not available")
+      }
 
       return receipt.hash
     } catch (error: any) {
@@ -375,12 +824,25 @@ export default function AgentChatPage() {
                 <TooltipContent side="bottom"><p>Copy Agent ID</p></TooltipContent>
               </Tooltip>
             </div>
-            <UserProfile
-              onLogout={() => {
-                logout()
-                router.push("/")
-              }}
-            />
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 px-2 text-[11px]"
+                onClick={() => setIsAuditSheetOpen(true)}
+                disabled={!dbUser?.id}
+              >
+                <Database className="h-3.5 w-3.5" />
+                Audit Logs
+              </Button>
+              <UserProfile
+                onLogout={() => {
+                  logout()
+                  router.push("/")
+                }}
+              />
+            </div>
           </div>
         </header>
 
@@ -460,7 +922,7 @@ export default function AgentChatPage() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Message…"
-              className="min-h-[40px] max-h-[120px] flex-1 resize-none rounded-lg border-border bg-muted/30 px-3 py-2.5 text-sm placeholder:text-muted-foreground/50 focus-visible:bg-background focus-visible:ring-1 focus-visible:ring-ring"
+              className="min-h-10 max-h-30 flex-1 resize-none rounded-lg border-border bg-muted/30 px-3 py-2.5 text-sm placeholder:text-muted-foreground/50 focus-visible:bg-background focus-visible:ring-1 focus-visible:ring-ring"
               disabled={isLoading || !dbUser?.id}
             />
             <Tooltip>
@@ -483,6 +945,14 @@ export default function AgentChatPage() {
           </div>
         </footer>
       </div>
+
+      <AuditLogsSheet
+        open={isAuditSheetOpen}
+        onOpenChange={setIsAuditSheetOpen}
+        agentId={agent.id}
+        userId={dbUser?.id}
+        conversationId={conversationId}
+      />
     </TooltipProvider>
   )
 }
