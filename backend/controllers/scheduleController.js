@@ -269,16 +269,30 @@ async function runTransfer(job) {
       last_error:     error,
       run_count:      (job.run_count || 0) + 1
     };
-    await supabase
-      .from('scheduled_transfers')
-      .update(updatePayload)
-      .eq('id', id)
-      .catch(() => {});
+    try {
+      const { error: updateError } = await supabase
+        .from('scheduled_transfers')
+        .update(updatePayload)
+        .eq('id', id);
 
-    await supabase
-      .from('scheduled_transfer_logs')
-      .insert({ job_id: id, ...logEntry })
-      .catch(() => {});
+      if (updateError) {
+        console.warn(`[Schedule] Failed to update execution metadata for job ${id}: ${updateError.message}`);
+      }
+    } catch (persistError) {
+      console.warn(`[Schedule] Failed to update execution metadata for job ${id}: ${persistError.message}`);
+    }
+
+    try {
+      const { error: logError } = await supabase
+        .from('scheduled_transfer_logs')
+        .insert({ job_id: id, ...logEntry });
+
+      if (logError) {
+        console.warn(`[Schedule] Failed to write execution log for job ${id}: ${logError.message}`);
+      }
+    } catch (persistError) {
+      console.warn(`[Schedule] Failed to write execution log for job ${id}: ${persistError.message}`);
+    }
   }
 }
 
@@ -309,11 +323,18 @@ function registerTask(job) {
       await runTransfer(job);
       // Mark as completed after running once
       if (supabase) {
-        await supabase
-          .from('scheduled_transfers')
-          .update({ status: 'completed' })
-          .eq('id', job.id)
-          .catch(() => {});
+        try {
+          const { error: completionError } = await supabase
+            .from('scheduled_transfers')
+            .update({ status: 'completed' })
+            .eq('id', job.id);
+
+          if (completionError) {
+            console.warn(`[Schedule] Failed to mark one-shot job ${job.id} as completed: ${completionError.message}`);
+          }
+        } catch (completionPersistError) {
+          console.warn(`[Schedule] Failed to mark one-shot job ${job.id} as completed: ${completionPersistError.message}`);
+        }
       }
       activeTasks.delete(job.id);
     }, delay);
@@ -588,11 +609,18 @@ async function pauseSchedule(req, res) {
     }
 
     if (supabase) {
-      await supabase
-        .from('scheduled_transfers')
-        .update({ status: 'paused', updated_at: new Date().toISOString() })
-        .eq('id', id)
-        .catch(() => {});
+      try {
+        const { error: pauseError } = await supabase
+          .from('scheduled_transfers')
+          .update({ status: 'paused', updated_at: new Date().toISOString() })
+          .eq('id', id);
+
+        if (pauseError) {
+          console.warn(`[Schedule] Failed to persist paused status for job ${id}: ${pauseError.message}`);
+        }
+      } catch (pausePersistError) {
+        console.warn(`[Schedule] Failed to persist paused status for job ${id}: ${pausePersistError.message}`);
+      }
     }
 
     return res.json(successResponse({ id, status: 'paused' }));
