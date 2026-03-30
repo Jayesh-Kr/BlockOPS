@@ -14,7 +14,7 @@ import type {
 import type { SupportedChainId } from './chains'
 
 // Backend URLs from environment
-const BLOCKCHAIN_API_KEY = process.env.NEXT_PUBLIC_BLOCKCHAIN_API_KEY || 'REPLACE_ME_WITH_A_RANDOM_SECRET'
+const BLOCKCHAIN_API_KEY = process.env.NEXT_PUBLIC_BLOCKCHAIN_API_KEY || ''
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '')
 }

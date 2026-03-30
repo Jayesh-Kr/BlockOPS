@@ -3,6 +3,27 @@ import type { Agent } from './supabase'
 
 type ToolConfig = Array<{ tool: string; next_tool: string | null }>
 
+const PLACEHOLDER_API_KEY = 'REPLACE_ME_WITH_A_RANDOM_SECRET'
+
+function getApiKeyHeaders(contentTypeJson = false): Record<string, string> {
+  if (!BLOCKCHAIN_API_KEY || BLOCKCHAIN_API_KEY === PLACEHOLDER_API_KEY) {
+    throw new Error(
+      'Missing NEXT_PUBLIC_BLOCKCHAIN_API_KEY. Set it in frontend/.env to match backend MASTER_API_KEY, then restart the frontend dev server.'
+    )
+  }
+
+  if (contentTypeJson) {
+    return {
+      'Content-Type': 'application/json',
+      'x-api-key': BLOCKCHAIN_API_KEY,
+    }
+  }
+
+  return {
+    'x-api-key': BLOCKCHAIN_API_KEY,
+  }
+}
+
 export interface AgentAuditLog {
   id: string
   agent_id: string
@@ -88,10 +109,7 @@ export async function createAgent(
 ): Promise<Agent> {
   const response = await safeFetch(`${BLOCKCHAIN_BACKEND_URL}/agents`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': BLOCKCHAIN_API_KEY,
-    },
+    headers: getApiKeyHeaders(true),
     body: JSON.stringify({
       userId,
       name,
@@ -110,13 +128,11 @@ export async function createAgent(
 
 export async function getAgentsByUserId(userId: string): Promise<Agent[]> {
   const response = await safeFetch(
-  `${BLOCKCHAIN_BACKEND_URL}/agents?userId=${encodeURIComponent(userId)}`,
-  {
-    headers: {
-      'x-api-key': BLOCKCHAIN_API_KEY,
-    },
-  }
-)
+    `${BLOCKCHAIN_BACKEND_URL}/agents?userId=${encodeURIComponent(userId)}`,
+    {
+      headers: getApiKeyHeaders(),
+    }
+  )
   const payload = await parseJson(response)
 
   if (!response.ok || !payload.success) {
@@ -126,15 +142,19 @@ export async function getAgentsByUserId(userId: string): Promise<Agent[]> {
   return Array.isArray(payload.agents) ? payload.agents.map(normalizeAgent) : []
 }
 
-export async function getAgentById(agentId: string): Promise<Agent | null> {
-  const response = await safeFetch(
-  `${BLOCKCHAIN_BACKEND_URL}/agents?userId=${encodeURIComponent(userId)}`,
-  {
-    headers: {
-      'x-api-key': BLOCKCHAIN_API_KEY,
-    },
+export async function getAgentById(agentId: string, userId?: string): Promise<Agent | null> {
+  const query = new URLSearchParams()
+  if (userId) {
+    query.set('userId', userId)
   }
-)
+
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  const response = await safeFetch(
+    `${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}${suffix}`,
+    {
+      headers: getApiKeyHeaders(),
+    }
+  )
   const payload = await parseJson(response)
 
   if (response.status === 404) {
@@ -162,10 +182,7 @@ export async function updateAgent(
 ): Promise<Agent> {
   const response = await safeFetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}`, {
     method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': BLOCKCHAIN_API_KEY,
-    },
+    headers: getApiKeyHeaders(true),
     body: JSON.stringify(updates),
   })
   const payload = await parseJson(response)
@@ -180,9 +197,7 @@ export async function updateAgent(
 export async function deleteAgent(agentId: string): Promise<void> {
   const response = await safeFetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}`, {
     method: 'DELETE',
-    headers: {
-      'x-api-key': BLOCKCHAIN_API_KEY,
-    }
+    headers: getApiKeyHeaders(),
   })
   const payload = await parseJson(response)
 
