@@ -4,6 +4,7 @@ import { createNode, generateNodeId } from './workflow-utils'
 // Map AI tool types to our in-app tool types
 const toolTypeMap: Record<string, string> = {
   transfer: 'transfer',
+  batch_transfer: 'batch_transfer',
   swap: 'swap',
   stt_balance_fetch: 'get_balance',
   deploy_erc20: 'deploy_erc20',
@@ -53,6 +54,7 @@ export function aiResponseToWorkflow(aiResponse: AIResponse): { nodes: Node[]; e
     // Check if this tool type exists in our system
     const validToolTypes = [
       'transfer',
+      'batch_transfer',
       'swap',
       'get_balance',
       'deploy_erc20',

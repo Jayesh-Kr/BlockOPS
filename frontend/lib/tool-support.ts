@@ -2,6 +2,7 @@ export type ToolChainSupport = "both" | "flow" | "arbitrum"
 
 export const TOOL_CHAIN_SUPPORT: Record<string, ToolChainSupport> = {
   transfer: "both",
+  batch_transfer: "both",
   get_balance: "both",
   fetch_price: "both",
   send_email: "both",

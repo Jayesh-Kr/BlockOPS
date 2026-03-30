@@ -32,6 +32,7 @@ export const createNode = ({
 const getDefaultLabel = (type: string): string => {
   const labels: Record<string, string> = {
     transfer: "Transfer",
+    batch_transfer: "Batch Transfer",
     swap: "Swap",
     get_balance: "Get Balance",
     deploy_erc20: "Deploy ERC-20",
@@ -60,6 +61,7 @@ const getDefaultLabel = (type: string): string => {
 const getDefaultDescription = (type: string): string => {
   const descriptions: Record<string, string> = {
     transfer: "Transfer tokens or assets",
+    batch_transfer: "Multi-send to many wallets",
     swap: "Swap tokens",
     get_balance: "Get wallet balance",
     deploy_erc20: "Deploy ERC-20 token",

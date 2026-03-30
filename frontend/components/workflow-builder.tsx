@@ -60,6 +60,7 @@ import { Textarea } from "@/components/ui/textarea"
 
 const toolTypes = [
   "transfer",
+  "batch_transfer",
   "swap",
   "get_balance",
   "deploy_erc20",
@@ -86,6 +87,7 @@ const toolTypes = [
 const nodeTypes: NodeTypes = {
   agent: AgentNode,
   transfer: ToolNode,
+  batch_transfer: ToolNode,
   swap: ToolNode,
   get_balance: ToolNode,
   deploy_erc20: ToolNode,

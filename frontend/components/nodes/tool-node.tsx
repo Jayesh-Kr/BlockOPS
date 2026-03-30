@@ -29,6 +29,7 @@ import { getToolSupportMeta } from "@/lib/tool-support"
 
 const toolIcons: Record<string, React.ReactNode> = {
   transfer: <ArrowRightLeft className="h-4 w-4" />,
+  batch_transfer: <ArrowRightLeft className="h-4 w-4" />,
   swap: <RefreshCw className="h-4 w-4" />,
   get_balance: <Wallet className="h-4 w-4" />,
   deploy_erc20: <Coins className="h-4 w-4" />,
@@ -54,6 +55,7 @@ const toolIcons: Record<string, React.ReactNode> = {
 
 const toolColors: Record<string, { border: string; bg: string; text: string }> = {
   transfer: { border: "border-foreground/40", bg: "bg-foreground/5", text: "text-foreground" },
+  batch_transfer: { border: "border-foreground/50", bg: "bg-foreground/10", text: "text-foreground" },
   swap: { border: "border-foreground/50", bg: "bg-foreground/10", text: "text-foreground" },
   get_balance: { border: "border-foreground/60", bg: "bg-foreground/15", text: "text-foreground" },
   deploy_erc20: { border: "border-foreground/40", bg: "bg-foreground/5", text: "text-foreground" },

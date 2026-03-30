@@ -30,6 +30,12 @@ const toolTypes = [
     icon: ArrowRightLeft,
   },
   {
+    type: "batch_transfer",
+    label: "Batch Transfer",
+    description: "Multi-send to many wallets",
+    icon: ArrowRightLeft,
+  },
+  {
     type: "get_balance",
     label: "Get Balance",
     description: "Get wallet balance",
