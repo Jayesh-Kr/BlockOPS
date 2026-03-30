@@ -1189,7 +1189,7 @@ export default function AgentChatPage() {
 
     try {
       let resolvedPrivateKey: string | undefined
-      if (dbUser?.wallet_type !== "pkp" && dbUser?.private_key) {
+      if (dbUser?.private_key) {
         try {
           resolvedPrivateKey = (await decryptStoredPrivateKey(dbUser.private_key)) || undefined
         } catch (error: any) {

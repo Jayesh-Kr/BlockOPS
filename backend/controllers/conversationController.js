@@ -462,10 +462,15 @@ async function chat(req, res) {
       
       // Also check if "missing" info is actually in conversation context
       const contextStr = `${messages.map(m => m.content).join(' ')} ${walletAddress || ''} ${defaultEmailTo || ''} ${userEmail || ''}`;
+      const hasUsablePrivateKey = typeof privateKey === 'string' && privateKey.trim().length > 0;
       const hasTransferStep = routingPlan.execution_plan?.steps?.some(step => step.tool === 'transfer');
       const hasSendEmailStep = routingPlan.execution_plan?.steps?.some(step => step.tool === 'send_email');
       const resolvedEmailTo = defaultEmailTo || userEmail || null;
       const finalMissingInfo = trulyMissingInfo.filter(info => {
+        if (hasUsablePrivateKey && /private\s*key|signing\s*key|privatekey/i.test(info)) {
+          console.log(`[Chat] Private key already provided, removing from missing: "${info}"`);
+          return false;
+        }
         // Check if the missing info might already be in conversation context
         if (/address/i.test(info) && /0x[a-fA-F0-9]{40}/.test(contextStr)) {
           console.log(`[Chat] Address found in context, removing from missing: "${info}"`);
@@ -507,7 +512,7 @@ async function chat(req, res) {
         const hasSignerKeyMissing = finalMissingInfo.some(info => /private\s*key|signing\s*key|privatekey/i.test(info));
         const signerSteps = (routingPlan.execution_plan?.steps || []).filter(step => signerTools.has(step.tool));
 
-        if (walletAddress && hasSignerKeyMissing && signerSteps.length > 0) {
+        if (!hasUsablePrivateKey && walletAddress && hasSignerKeyMissing && signerSteps.length > 0) {
           const signerToolList = [...new Set(signerSteps.map(step => step.tool))].join(', ');
           const signerMessage = `This request requires transaction signing for tool(s): ${signerToolList}. In direct fallback mode, only transfer supports wallet-sign preparation without a privateKey. Please provide privateKey for these tools, or retry when AI providers recover.`;
 
