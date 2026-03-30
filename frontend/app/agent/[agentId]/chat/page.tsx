@@ -37,6 +37,8 @@ import { useWallets } from "@privy-io/react-auth"
 import { decryptStoredPrivateKey } from "@/lib/lit-private-key"
 import { hasStoredPkpWallet, signTransactionWithPkp } from "@/lib/lit-pkp"
 import { BrowserProvider } from "ethers"
+import { CHAIN_CONFIGS, getChainConfig, getStoredChain, setStoredChain, type SupportedChainId } from "@/lib/chains"
+import { getAddressFromPrivateKey } from "@/lib/wallet"
 
 const DEFAULT_EMAIL_RECIPIENT_KEY = "blockops.defaultEmailRecipient"
 const AUDIT_LOG_FETCH_LIMIT = 200
@@ -1295,8 +1297,10 @@ export default function AgentChatPage() {
   const [isAuditSheetOpen, setIsAuditSheetOpen] = useState(false)
   const [isReminderSheetOpen, setIsReminderSheetOpen] = useState(false)
   const [conversationId, setConversationId] = useState<string | undefined>(undefined)
+  const [selectedChain, setSelectedChain] = useState<SupportedChainId>("flow-testnet")
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const selectedChainConfig = getChainConfig(selectedChain)
 
   // Function to handle MetaMask transaction signing
   const handleMetaMaskTransaction = async (txData: any): Promise<string> => {
@@ -1306,7 +1310,7 @@ export default function AgentChatPage() {
       }
 
       const wallet = wallets[0]
-      await wallet.switchChain(421614) // Arbitrum Sepolia
+      await wallet.switchChain(selectedChainConfig.chainId)
 
       const ethereumProvider = await wallet.getEthereumProvider()
       const provider = new BrowserProvider(ethereumProvider)
@@ -1334,6 +1338,7 @@ export default function AgentChatPage() {
     const signed = await signTransactionWithPkp({
       pkpPublicKey: dbUser.pkp_public_key,
       pkpTokenId: dbUser.pkp_token_id,
+      chain: selectedChain,
       transaction: {
         to: txData.transaction?.to,
         data: txData.transaction?.data || null,
@@ -1346,6 +1351,10 @@ export default function AgentChatPage() {
       explorerUrl: signed.explorerUrl,
     }
   }
+
+  useEffect(() => {
+    setSelectedChain(getStoredChain())
+  }, [])
 
   useEffect(() => {
     const loadAgent = async () => {
@@ -1395,24 +1404,44 @@ export default function AgentChatPage() {
 
     try {
       let resolvedPrivateKey: string | undefined
+      let derivedSignerAddress: string | undefined
       if (dbUser?.private_key) {
         try {
           resolvedPrivateKey = (await decryptStoredPrivateKey(dbUser.private_key)) || undefined
+          if (resolvedPrivateKey) {
+            derivedSignerAddress = getAddressFromPrivateKey(resolvedPrivateKey)
+          }
         } catch (error: any) {
           console.warn("Failed to decrypt stored private key for chat request:", error)
         }
+      }
+
+      if (
+        dbUser?.wallet_address &&
+        derivedSignerAddress &&
+        dbUser.wallet_address.toLowerCase() !== derivedSignerAddress.toLowerCase()
+      ) {
+        console.warn("Stored agent wallet address does not match decrypted private key address.", {
+          storedWalletAddress: dbUser.wallet_address,
+          derivedSignerAddress,
+        })
       }
 
       const savedEmailRecipient = typeof window !== "undefined"
         ? window.localStorage.getItem(DEFAULT_EMAIL_RECIPIENT_KEY)?.trim()
         : ""
       const effectiveDefaultEmailTo = savedEmailRecipient || user?.email?.address || undefined
-      const effectiveWalletAddress = privyWalletAddress || dbUser?.wallet_address || undefined
+      const effectiveWalletAddress =
+        derivedSignerAddress ||
+        dbUser?.wallet_address ||
+        privyWalletAddress ||
+        undefined
 
       const data = await sendChatWithMemory({
         agentId: agent.id,
         userId: dbUser.id,
         message: userQuery,
+        chain: selectedChain,
         conversationId: conversationId,
         deliveryPlatform: "web",
         systemPrompt: `You are a helpful AI assistant for blockchain operations. The agent has these tools: ${agent.tools?.map((t) => t.tool).join(", ")}`,
@@ -1444,7 +1473,7 @@ export default function AgentChatPage() {
               const txHash = await handleMetaMaskTransaction(result.result)
               
               // Update message with transaction hash
-              const explorerUrl = `https://sepolia.arbiscan.io/tx/${txHash}`
+              const explorerUrl = `${selectedChainConfig.explorerBaseUrl}/tx/${txHash}`
               finalMessage += `\n\n✅ Transaction confirmed!\nTransaction Hash: [${txHash.slice(0, 10)}...${txHash.slice(-8)}](${explorerUrl})`
               
               toast({
@@ -1588,6 +1617,21 @@ export default function AgentChatPage() {
               <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-normal">
                 {agent.tools?.length || 0} {(agent.tools?.length || 0) === 1 ? "tool" : "tools"}
               </Badge>
+              <select
+                className="h-6 rounded-md border border-border bg-background px-2 text-[10px] text-muted-foreground"
+                value={selectedChain}
+                onChange={(event) => {
+                  const nextChain = event.target.value as SupportedChainId
+                  setSelectedChain(nextChain)
+                  setStoredChain(nextChain)
+                }}
+              >
+                {Object.values(CHAIN_CONFIGS).map((chain) => (
+                  <option key={chain.id} value={chain.id}>
+                    {chain.name}
+                  </option>
+                ))}
+              </select>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -1654,6 +1698,7 @@ export default function AgentChatPage() {
                     <CircleDot className="h-4 w-4 text-muted-foreground" />
                   </div>
                   <p className="text-xs text-muted-foreground">Send a message to begin.</p>
+                  <p className="text-[11px] text-muted-foreground">Default execution chain: {selectedChainConfig.name}</p>
                 </div>
               </div>
             )}

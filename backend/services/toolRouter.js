@@ -13,15 +13,15 @@ const AVAILABLE_TOOLS = {
   },
   get_balance: {
     name: 'get_balance',
-    description: 'Gets the ETH balance of a wallet address. If the user asks for "my balance", the connected wallet address will be used automatically.',
-    parameters: ['wallet_address (optional if user is asking for their own balance)'],
-    examples: ['What is the balance of 0x123...?', 'Check my wallet balance', 'How much ETH do I have?']
+    description: 'Gets the native token balance of a wallet address on the selected chain. If the user asks for "my balance", the connected wallet address will be used automatically.',
+    parameters: ['wallet_address (optional if user is asking for their own balance)', 'chain (optional, defaults to Flow EVM Testnet)'],
+    examples: ['What is the balance of 0x123...?', 'Check my wallet balance on Flow', 'How much FLOW do I have?']
   },
   transfer: {
     name: 'transfer',
-    description: 'Transfers ETH or ERC20 tokens from user\'s connected wallet to another wallet. The user\'s wallet address is used automatically.',
-    parameters: ['to_address', 'amount', 'token_address (optional)'],
-    examples: ['Send 1 ETH to 0x123...', 'Transfer 100 USDC to Alice', 'Pay Bob 0.5 ETH']
+    description: 'Transfers the selected chain native token or an ERC20 token from the user\'s connected wallet to another wallet. The user\'s wallet address is used automatically.',
+    parameters: ['to_address', 'amount', 'token_address (optional)', 'chain (optional, defaults to Flow EVM Testnet)'],
+    examples: ['Send 1 FLOW to 0x123...', 'Transfer 100 USDC to Alice on Flow', 'Pay Bob 0.5 ETH on Arbitrum']
   },
   deploy_erc20: {
     name: 'deploy_erc20',
@@ -73,9 +73,9 @@ const AVAILABLE_TOOLS = {
   },
   batch_transfer: {
     name: 'batch_transfer',
-    description: 'Sends native ETH to multiple wallet addresses in a single on-chain transaction (airdrop / multi-send). Requires a list of recipient addresses and amounts.',
-    parameters: ['privateKey', 'recipients (array of {address, amount})'],
-    examples: ['Airdrop 0.1 ETH to 5 wallets', 'Send ETH to multiple addresses at once', 'Multi-send ETH to a list of addresses']
+    description: 'Sends the selected chain native token to multiple wallet addresses in a single on-chain transaction (airdrop / multi-send). Requires a list of recipient addresses and amounts.',
+    parameters: ['privateKey', 'recipients (array of {address, amount})', 'chain (optional, defaults to Flow EVM Testnet)'],
+    examples: ['Airdrop 0.1 FLOW to 5 wallets', 'Send FLOW to multiple addresses at once', 'Multi-send ETH on Arbitrum']
   },
   batch_mint: {
     name: 'batch_mint',
@@ -85,9 +85,9 @@ const AVAILABLE_TOOLS = {
   },
   lookup_transaction: {
     name: 'lookup_transaction',
-    description: 'Look up an on-chain transaction by its hash. Returns full details including status, gas used, value, decoded input, and revert reason if failed.',
-    parameters: ['txHash'],
-    examples: ['Check the status of tx 0xabc...', 'Did this transaction succeed?', 'What happened in transaction 0x...']
+    description: 'Look up an on-chain transaction by its hash on the selected chain. Returns full details including status, gas used, value, decoded input, and revert reason if failed.',
+    parameters: ['txHash', 'chain (optional, defaults to Flow EVM Testnet)'],
+    examples: ['Check the status of tx 0xabc...', 'Did this transaction succeed on Flow?', 'What happened in transaction 0x...']
   },
   fetch_events: {
     name: 'fetch_events',
@@ -97,19 +97,19 @@ const AVAILABLE_TOOLS = {
   },
   lookup_block: {
     name: 'lookup_block',
-    description: 'Get information about a specific block by number, or the latest block.',
-    parameters: ['blockNumber (or "latest")'],
+    description: 'Get information about a specific block by number, or the latest block, on the selected chain.',
+    parameters: ['blockNumber (or "latest")', 'chain (optional, defaults to Flow EVM Testnet)'],
     examples: ['What is the latest block?', 'Show me block 12345678', 'Get latest block info']
   },
   decode_revert: {
     name: 'decode_revert',
-    description: 'Decode a revert reason from a failed transaction hash or raw revert data hex.',
-    parameters: ['txHash (optional)', 'data (optional hex)'],
+    description: 'Decode a revert reason from a failed transaction hash or raw revert data hex on the selected chain.',
+    parameters: ['txHash (optional)', 'data (optional hex)', 'chain (optional, defaults to Flow EVM Testnet)'],
     examples: ['Why did transaction 0x... fail?', 'Decode this revert data: 0x08c379a0...', 'What is the revert reason for this tx?']
   },
   get_portfolio: {
     name: 'get_portfolio',
-    description: 'Get a full portfolio breakdown for a wallet address: ETH balance, all ERC20 token holdings, NFT holdings, and total USD value.',
+    description: 'Get a full portfolio breakdown for a wallet address. This remains Arbitrum Sepolia-only in the current build.',
     parameters: ['address'],
     examples: ['Show my portfolio for 0x...', 'What tokens does this wallet hold?', 'Get the total value of wallet 0x...']
   },
@@ -121,9 +121,9 @@ const AVAILABLE_TOOLS = {
   },
   estimate_gas: {
     name: 'estimate_gas',
-    description: 'Get current gas prices on Arbitrum Sepolia with slow/normal/fast fee tiers and estimated transaction costs.',
-    parameters: [],
-    examples: ['What are the current gas prices?', 'How much gas does a transfer cost right now?', 'Show me gas fee tiers']
+    description: 'Get current gas prices on the selected chain with slow/normal/fast fee tiers and estimated transaction costs.',
+    parameters: ['chain (optional, defaults to Flow EVM Testnet)'],
+    examples: ['What are the current gas prices on Flow?', 'How much gas does a transfer cost right now?', 'Show me gas fee tiers']
   },
   simulate_gas: {
     name: 'simulate_gas',
@@ -163,9 +163,21 @@ const AVAILABLE_TOOLS = {
   },
   schedule_transfer: {
     name: 'schedule_transfer',
-    description: 'Schedule a one-time or recurring on-chain ETH or ERC20 transfer using a cron expression, ISO datetime string, or relative timer phrase (for example, "in 5 minutes").',
-    parameters: ['privateKey', 'toAddress', 'amount', 'cronExpression (cron string, ISO datetime, or relative timer phrase like "in 5 minutes")', 'tokenAddress (optional)', 'label (optional)'],
-    examples: ['Schedule a transfer of 0.01 ETH every day at 9am', 'Send 100 USDC to 0x... every Monday', 'Schedule a one-time transfer at 2026-03-10T12:00:00Z', 'Send 0.001 ETH to 0x... in 5 minutes']
+    description: 'Schedule a one-time or recurring on-chain native token or ERC20 transfer using a cron expression, ISO datetime string, or relative timer phrase (for example, "in 5 minutes").',
+    parameters: ['privateKey', 'toAddress', 'amount', 'cronExpression (cron string, ISO datetime, or relative timer phrase like "in 5 minutes")', 'tokenAddress (optional)', 'label (optional)', 'chain (optional, defaults to Flow EVM Testnet)'],
+    examples: ['Schedule a transfer of 0.01 FLOW every day at 9am', 'Send 100 USDC to 0x... every Monday on Flow', 'Schedule a one-time transfer at 2026-03-10T12:00:00Z']
+  },
+  create_savings_plan: {
+    name: 'create_savings_plan',
+    description: 'Create a recurring savings plan on the selected chain by scheduling automated deposits to a wallet, vault, or savings address.',
+    parameters: ['privateKey', 'toAddress', 'amount', 'cronExpression', 'tokenAddress (optional)', 'label (optional)', 'chain (optional, defaults to Flow EVM Testnet)'],
+    examples: ['Save 5 FLOW every Friday', 'Create a weekly savings plan to 0x...', 'Auto-save 25 USDC each month']
+  },
+  schedule_payout: {
+    name: 'schedule_payout',
+    description: 'Create a recurring payout on the selected chain by scheduling automated transfers to a contributor, employee, or grant recipient.',
+    parameters: ['privateKey', 'toAddress', 'amount', 'cronExpression', 'tokenAddress (optional)', 'label (optional)', 'chain (optional, defaults to Flow EVM Testnet)'],
+    examples: ['Pay a contributor 10 FLOW every month', 'Schedule a monthly grant payout to 0x...', 'Send 100 USDC on the first day of every month']
   },
   schedule_reminder: {
     name: 'schedule_reminder',
@@ -205,7 +217,7 @@ const AVAILABLE_TOOLS = {
  * @param {Array} conversationHistory - Recent conversation messages for context
  * @returns {Promise<Object>} Tool execution plan with tools, order, and parameters
  */
-async function intelligentToolRouting(userMessage, conversationHistory = []) {
+async function intelligentToolRouting(userMessage, conversationHistory = [], routingContext = {}) {
   const reminderPlan = detectReminderPlan(userMessage, conversationHistory);
   if (reminderPlan) {
     return reminderPlan;
@@ -363,10 +375,11 @@ missing_info: [] (EMPTY — all data comes from tools)
 4. Extract parameters from BOTH the current message AND conversation history
 5. For ANY calculation involving prices/balances → add fetch_price + calculate steps
 6. Ethereum addresses are 42 chars starting with "0x"
-7. Network: Arbitrum Sepolia (Chain ID: 421614)
+7. Default execution chain: ${routingContext.networkName || 'Flow EVM Testnet'} (Chain ID: ${routingContext.chainId || 545})
 8. When the user says "calculate" or "now calculate" after previous data was fetched, create a calculate step using the data from conversation context
 9. If the user says generic words like "this balance" or "my balance", look for the wallet address and balance in recent conversation messages
 10. NEVER put prices, balances, or token info in missing_info — those are fetchable by tools
+11. Include "chain": "${routingContext.chain || 'flow-testnet'}" in blockchain tool parameters unless the user explicitly requested another supported chain
 
 Respond ONLY with valid JSON, no other text.`;
 

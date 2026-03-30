@@ -3,6 +3,7 @@ const supabase = require('../config/supabase');
 const { successResponse, errorResponse } = require('../utils/helpers');
 const { executeToolsDirectly, formatToolResponse } = require('../services/directToolExecutor');
 const { fireToTelegram } = require('../services/telegramService');
+const { getChainFromRequest, getChainMetadata, normalizeChainId, isFlowChain } = require('../utils/chains');
 const {
   isUuidLike,
   hasInMemoryConversation,
@@ -169,6 +170,7 @@ function validateReminderJob(job) {
 }
 
 function buildReminderExecutionPlan(job) {
+  const chain = normalizeChainId(job.chain || 'arbitrum-sepolia');
   switch (job.task_type) {
     case 'balance':
       return {
@@ -177,7 +179,7 @@ function buildReminderExecutionPlan(job) {
           {
             tool: 'get_balance',
             reason: 'Fetch the latest ETH balance for the scheduled wallet check',
-            parameters: { address: job.wallet_address },
+            parameters: { address: job.wallet_address, chain },
             depends_on: []
           }
         ]
@@ -189,7 +191,7 @@ function buildReminderExecutionPlan(job) {
           {
             tool: 'get_portfolio',
             reason: 'Fetch the latest wallet portfolio snapshot for the scheduled reminder',
-            parameters: { address: job.wallet_address },
+            parameters: { address: job.wallet_address, chain },
             depends_on: []
           }
         ]
@@ -201,7 +203,7 @@ function buildReminderExecutionPlan(job) {
           {
             tool: 'fetch_price',
             reason: 'Fetch the latest token price for the scheduled reminder',
-            parameters: { query: job.token_query },
+            parameters: { query: job.token_query, chain },
             depends_on: []
           }
         ]
@@ -301,6 +303,7 @@ async function runReminder(job) {
       job.original_message || '',
       {
         walletAddress: job.wallet_address || null,
+        chain: normalizeChainId(job.chain || 'arbitrum-sepolia'),
         apiKey: process.env.MASTER_API_KEY || null
       }
     );
@@ -426,6 +429,8 @@ async function createReminder(req, res) {
       deliveryPlatform,
       telegramChatId
     } = req.body;
+    const chain = getChainFromRequest(req);
+    const chainMetadata = getChainMetadata(chain);
 
     const oneShot = isOneShot(cronExpression);
     const agentId = req.body.agentId || req.apiKey?.agentId || null;
@@ -437,6 +442,7 @@ async function createReminder(req, res) {
       delivery_platform: deliveryPlatform || 'web',
       telegram_chat_id: telegramChatId || null,
       task_type: taskType,
+      chain,
       wallet_address: walletAddress || null,
       token_query: tokenQuery || null,
       cron_expression: cronExpression,
@@ -452,6 +458,10 @@ async function createReminder(req, res) {
     const validationErrors = validateReminderJob(reminderRow);
     if (validationErrors.length > 0) {
       return res.status(400).json(errorResponse(validationErrors.join('. ')));
+    }
+
+    if (taskType === 'portfolio' && isFlowChain(chain)) {
+      return res.status(400).json(errorResponse('Portfolio reminders are available on Arbitrum Sepolia only in the current build.'));
     }
 
     if (reminderRow.delivery_platform === 'web') {
@@ -502,6 +512,9 @@ async function createReminder(req, res) {
       type: storedReminder.type,
       status: storedReminder.status,
       taskType,
+      chain,
+      chainId: chainMetadata.chainId,
+      network: chainMetadata.network,
       walletAddress: walletAddress || null,
       tokenQuery: tokenQuery || null,
       cronExpression,
@@ -530,7 +543,7 @@ async function listReminders(req, res) {
 
     let query = supabase
       .from('scheduled_chat_reminders')
-      .select('id, agent_id, user_id, conversation_id, delivery_platform, telegram_chat_id, task_type, wallet_address, token_query, cron_expression, label, type, status, run_count, last_run_at, last_error, last_result_summary, created_at')
+      .select('id, agent_id, user_id, conversation_id, delivery_platform, telegram_chat_id, task_type, chain, wallet_address, token_query, cron_expression, label, type, status, run_count, last_run_at, last_error, last_result_summary, created_at')
       .order('created_at', { ascending: false });
 
     if (userId) query = query.eq('user_id', userId);

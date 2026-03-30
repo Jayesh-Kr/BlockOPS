@@ -1,6 +1,11 @@
 const axios = require('axios');
-const { PORT } = require('../config/constants');
+const { DEFAULT_CHAIN, PORT } = require('../config/constants');
 const { signAndBroadcastTransactionWithPkp } = require('./litPkpService');
+const {
+  buildUnsupportedToolError,
+  isToolSupportedOnChain,
+  normalizeChainId
+} = require('../utils/chains');
 
 const BASE_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
 
@@ -35,6 +40,8 @@ const TOOL_ENDPOINTS = {
   bridge_withdraw:     { method: 'POST', path: '/bridge/withdraw' },
   bridge_status:       { method: 'GET',  path: '/bridge/status/{txHash}' },
   schedule_transfer:   { method: 'POST', path: '/schedule/transfer' },
+  create_savings_plan: { method: 'POST', path: '/schedule/transfer' },
+  schedule_payout:     { method: 'POST', path: '/schedule/transfer' },
   schedule_reminder:   { method: 'POST', path: '/reminders' },
   list_reminders:      { method: 'GET',  path: '/reminders' },
   cancel_reminder:     { method: 'DELETE', path: '/reminders/{id}' },
@@ -348,6 +355,7 @@ function generateEmailFromPreviousResults(previousResults = [], fallbackMessage 
 function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}) {
   const missing = [];
   let mapped = { ...params };
+  const chain = normalizeChainId(params.chain || executionContext.chain || DEFAULT_CHAIN);
   const contextualAddress =
     params.wallet_address ||
     params.address ||
@@ -365,14 +373,14 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
     case 'fetch_price': {
       const query = params.query || params.token_name || params.symbol || fallbackMessage;
       const vsCurrency = params.vsCurrency || params.vs_currency || params.currency;
-      mapped = { query };
+      mapped = { query, chain };
       if (vsCurrency) mapped.vsCurrency = vsCurrency;
       if (!query) missing.push('query');
       break;
     }
     case 'get_balance': {
       const address = params.address || params.wallet_address || contextualAddress;
-      mapped = { address };
+      mapped = { address, chain };
       if (!address) missing.push('address');
       break;
     }
@@ -386,7 +394,8 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
         params.recipientAddress ||
         extractAddressFromText(fallbackMessage);
       const amount = params.amount || params.value || extractAmountFromText(fallbackMessage);
-      const tokenId = params.tokenId || params.token_id || params.tokenAddress || params.token_address;
+      const tokenId = params.tokenId || params.token_id;
+      const tokenAddress = params.tokenAddress || params.token_address;
       const fromAddress =
         params.fromAddress ||
         params.from_address ||
@@ -394,8 +403,9 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
         executionContext.walletAddress ||
         executionContext.wallet_address ||
         null;
-      mapped = { privateKey, fromAddress, toAddress, amount };
+      mapped = { privateKey, fromAddress, toAddress, amount, chain };
       if (tokenId !== undefined) mapped.tokenId = tokenId;
+      if (tokenAddress !== undefined) mapped.tokenAddress = tokenAddress;
       // If wallet is available but private key is not, we can still prepare the transfer
       // for client/Lit signing via /transfer/prepare.
       if (!privateKey && !fromAddress) missing.push('privateKey');
@@ -409,7 +419,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       const symbol = params.symbol;
       const initialSupply = params.initialSupply || params.initial_supply;
       const decimals = params.decimals;
-      mapped = { privateKey, name, symbol, initialSupply };
+      mapped = { privateKey, name, symbol, initialSupply, chain };
       if (decimals !== undefined) mapped.decimals = decimals;
       if (!privateKey) missing.push('privateKey');
       if (!name) missing.push('name');
@@ -422,7 +432,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       const name = params.name;
       const symbol = params.symbol;
       const baseURI = params.baseURI || params.base_uri;
-      mapped = { privateKey, name, symbol, baseURI };
+      mapped = { privateKey, name, symbol, baseURI, chain };
       if (!privateKey) missing.push('privateKey');
       if (!name) missing.push('name');
       if (!symbol) missing.push('symbol');
@@ -433,7 +443,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       const privateKey = contextualPrivateKey;
       const collectionAddress = params.collectionAddress || params.contract_address;
       const toAddress = params.toAddress || params.to_address;
-      mapped = { privateKey, collectionAddress, toAddress };
+      mapped = { privateKey, collectionAddress, toAddress, chain };
       if (!privateKey) missing.push('privateKey');
       if (!collectionAddress) missing.push('collectionAddress');
       if (!toAddress) missing.push('toAddress'); 
@@ -441,14 +451,14 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
     }
     case 'get_token_info': {
       const tokenId = params.tokenId || params.token_address;
-      mapped = { tokenId };
+      mapped = { tokenId, chain };
       if (!tokenId) missing.push('tokenId');
       break;
     }
     case 'get_token_balance': {
       const tokenId = params.tokenId || params.token_address;
       const ownerAddress = params.ownerAddress || params.wallet_address || contextualAddress;
-      mapped = { tokenId, ownerAddress };
+      mapped = { tokenId, ownerAddress, chain };
       if (!tokenId) missing.push('tokenId');
       if (!ownerAddress) missing.push('ownerAddress');
       break;
@@ -456,7 +466,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
     case 'get_nft_info': {
       const collectionAddress = params.collectionAddress || params.contract_address;
       const tokenId = params.tokenId || params.token_id;
-      mapped = { collectionAddress, tokenId };
+      mapped = { collectionAddress, tokenId, chain };
       if (!collectionAddress) missing.push('collectionAddress');
       if (!tokenId) missing.push('tokenId');
       break;
@@ -502,7 +512,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
     case 'batch_transfer': {
       const privateKey = contextualPrivateKey;
       const recipients = params.recipients;
-      mapped = { privateKey, recipients };
+      mapped = { privateKey, recipients, chain };
       if (!privateKey) missing.push('privateKey');
       if (!recipients || !Array.isArray(recipients) || recipients.length === 0) missing.push('recipients');
       break;
@@ -511,7 +521,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       const privateKey = contextualPrivateKey;
       const collectionAddress = params.collectionAddress || params.collection_address || params.contract_address;
       const recipients = params.recipients;
-      mapped = { privateKey, collectionAddress, recipients };
+      mapped = { privateKey, collectionAddress, recipients, chain };
       if (!privateKey) missing.push('privateKey');
       if (!collectionAddress) missing.push('collectionAddress');
       if (!recipients || !Array.isArray(recipients) || recipients.length === 0) missing.push('recipients');
@@ -519,7 +529,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
     }
     case 'tx_status': {
       const hash = params.hash || params.txHash || params.tx_hash;
-      mapped = { hash };
+      mapped = { hash, chain };
       if (!hash) missing.push('hash');
       break;
     }
@@ -527,13 +537,13 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       const address = params.address || params.wallet_address || contextualAddress;
       const page = params.page;
       const limit = params.limit;
-      mapped = { address, page, limit };
+      mapped = { address, page, limit, chain };
       if (!address) missing.push('address');
       break;
     }
     case 'lookup_transaction': {
       const txHash = params.txHash || params.tx_hash || params.hash;
-      mapped = { txHash };
+      mapped = { txHash, chain };
       if (!txHash) missing.push('txHash');
       break;
     }
@@ -543,42 +553,42 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       const fromBlock = params.fromBlock || params.from_block;
       const toBlock = params.toBlock || params.to_block;
       const limit = params.limit;
-      mapped = { contractAddress, eventSignature, fromBlock, toBlock, limit };
+      mapped = { contractAddress, eventSignature, fromBlock, toBlock, limit, chain };
       if (!contractAddress) missing.push('contractAddress');
       break;
     }
     case 'lookup_block': {
       const blockNumber = params.blockNumber || params.block_number || params.number || 'latest';
-      mapped = { blockNumber };
+      mapped = { blockNumber, chain };
       break;
     }
     case 'decode_revert': {
       const txHash = params.txHash || params.tx_hash || params.hash;
       const data = params.data || params.revertData || params.revert_data;
-      mapped = { txHash, data };
+      mapped = { txHash, data, chain };
       if (!txHash && !data) missing.push('txHash or data');
       break;
     }
     case 'get_portfolio': {
       const address = params.address || params.wallet_address || contextualAddress;
-      mapped = { address };
+      mapped = { address, chain };
       if (!address) missing.push('address');
       break;
     }
     case 'resolve_ens': {
       const name = params.name || params.ens_name;
-      mapped = { name };
+      mapped = { name, chain };
       if (!name) missing.push('name');
       break;
     }
     case 'reverse_ens': {
       const address = params.address || params.wallet_address || contextualAddress;
-      mapped = { address };
+      mapped = { address, chain };
       if (!address) missing.push('address');
       break;
     }
     case 'estimate_gas': {
-      mapped = {}; // no params needed
+      mapped = { chain }; // no params needed
       break;
     }
     case 'simulate_gas': {
@@ -589,7 +599,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       const abi = params.abi;
       const functionName = params.functionName || params.function_name;
       const args = params.args;
-      mapped = { to, from, data, value, abi, functionName, args };
+      mapped = { to, from, data, value, abi, functionName, args, chain };
       if (!to) missing.push('to');
       break;
     }
@@ -600,7 +610,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       const amountIn         = params.amountIn || params.amount_in || params.amount;
       const slippageTolerance = params.slippageTolerance || params.slippage || params.slippage_tolerance;
       const fee              = params.fee;
-      mapped = { privateKey, tokenIn, tokenOut, amountIn };
+      mapped = { privateKey, tokenIn, tokenOut, amountIn, chain };
       if (slippageTolerance !== undefined) mapped.slippageTolerance = slippageTolerance;
       if (fee !== undefined) mapped.fee = fee;
       if (!privateKey)  missing.push('privateKey');
@@ -614,7 +624,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       const tokenOut = params.tokenOut || params.token_out || params.to_token;
       const amountIn = params.amountIn || params.amount_in || params.amount;
       const fee      = params.fee;
-      mapped = { tokenIn, tokenOut, amountIn };
+      mapped = { tokenIn, tokenOut, amountIn, chain };
       if (fee !== undefined) mapped.fee = fee;
       if (!tokenIn)  missing.push('tokenIn');
       if (!tokenOut) missing.push('tokenOut');
@@ -626,7 +636,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       const amount             = params.amount;
       const tokenAddress       = params.tokenAddress || params.token_address || params.token;
       const destinationAddress = params.destinationAddress || params.destination || params.to;
-      mapped = { privateKey, amount };
+      mapped = { privateKey, amount, chain };
       if (tokenAddress)       mapped.tokenAddress       = tokenAddress;
       if (destinationAddress) mapped.destinationAddress = destinationAddress;
       if (!privateKey) missing.push('privateKey');
@@ -638,7 +648,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       const amount             = params.amount;
       const tokenAddress       = params.tokenAddress || params.token_address || params.token;
       const destinationAddress = params.destinationAddress || params.destination || params.to;
-      mapped = { privateKey, amount };
+      mapped = { privateKey, amount, chain };
       if (tokenAddress)       mapped.tokenAddress       = tokenAddress;
       if (destinationAddress) mapped.destinationAddress = destinationAddress;
       if (!privateKey) missing.push('privateKey');
@@ -647,11 +657,13 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
     }
     case 'bridge_status': {
       const txHash = params.txHash || params.tx_hash || params.hash;
-      mapped = { txHash };
+      mapped = { txHash, chain };
       if (!txHash) missing.push('txHash');
       break;
     }
-    case 'schedule_transfer': {
+    case 'schedule_transfer':
+    case 'create_savings_plan':
+    case 'schedule_payout': {
       const privateKey      = contextualPrivateKey;
       const toAddress       = params.toAddress  || params.to_address || params.to;
       const amount          = params.amount;
@@ -660,9 +672,15 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       const label           = params.label;
       const agentId         = params.agentId || executionContext.agentId || null;
       const userId          = params.userId || executionContext.userId || null;
-      mapped = { privateKey, toAddress, amount, cronExpression, agentId, userId };
+      mapped = { privateKey, toAddress, amount, cronExpression, agentId, userId, chain };
       if (tokenAddress) mapped.tokenAddress = tokenAddress;
       if (label)        mapped.label        = label;
+      if (tool === 'create_savings_plan' && !mapped.label) {
+        mapped.label = 'Flow savings plan';
+      }
+      if (tool === 'schedule_payout' && !mapped.label) {
+        mapped.label = 'Flow scheduled payout';
+      }
       if (!privateKey)     missing.push('privateKey');
       if (!toAddress)      missing.push('toAddress');
       if (!amount)         missing.push('amount');
@@ -686,6 +704,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
         taskType,
         cronExpression,
         label,
+        chain,
         walletAddress,
         tokenQuery,
         conversationId,
@@ -708,7 +727,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
     case 'list_reminders': {
       const userId = params.userId || executionContext.userId || null;
       const agentId = params.agentId || executionContext.agentId || null;
-      mapped = { userId, agentId };
+      mapped = { userId, agentId, chain };
       if (!userId && !agentId) missing.push('userId');
       break;
     }
@@ -730,7 +749,8 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
         conversationId,
         taskType,
         walletAddress,
-        mode
+        mode,
+        chain
       };
 
       const hasAnyId = Boolean(id) || ids.length > 0;
@@ -741,7 +761,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
     case 'list_schedules': {
       const userId = params.userId || executionContext.userId || null;
       const agentId = params.agentId || executionContext.agentId || null;
-      mapped = { userId, agentId };
+      mapped = { userId, agentId, chain };
       if (!userId && !agentId) missing.push('userId');
       break;
     }
@@ -749,7 +769,7 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       const id = params.id || params.jobId || params.job_id;
       const userId = params.userId || executionContext.userId || null;
       const agentId = params.agentId || executionContext.agentId || null;
-      mapped = { id, userId, agentId };
+      mapped = { id, userId, agentId, chain };
       if (!id) missing.push('id');
       if (!userId && !agentId) missing.push('userId');
       break;
@@ -983,6 +1003,7 @@ async function executeReminderToolLocally(tool, mapped) {
 async function executeToolStep(step, fallbackMessage, executionContext = {}) {
   const { tool, parameters } = step;
   const mapping = mapToolParams(tool, parameters, fallbackMessage, executionContext);
+  const selectedChain = mapping.mapped.chain || normalizeChainId(executionContext.chain || DEFAULT_CHAIN);
   const headers = {};
   if (executionContext.apiKey) {
     headers['x-api-key'] = executionContext.apiKey;
@@ -998,7 +1019,9 @@ async function executeToolStep(step, fallbackMessage, executionContext = {}) {
     'swap_tokens',
     'bridge_deposit',
     'bridge_withdraw',
-    'schedule_transfer'
+    'schedule_transfer',
+    'create_savings_plan',
+    'schedule_payout'
   ]).has(tool);
 
   // For transfer, support wallet-address-based prepare flow (Lit/MetaMask signing).
@@ -1017,6 +1040,17 @@ async function executeToolStep(step, fallbackMessage, executionContext = {}) {
     'list_reminders',
     'cancel_reminder'
   ]).has(tool);
+
+  if (!isToolSupportedOnChain(tool, selectedChain)) {
+    return {
+      tool_call: { tool, parameters: mapping.mapped },
+      result: {
+        success: false,
+        tool,
+        error: buildUnsupportedToolError(tool, selectedChain)
+      }
+    };
+  }
 
   if (mapping.missing.length > 0) {
     const missingPrivateKeyOnly =
@@ -1076,10 +1110,14 @@ async function executeToolStep(step, fallbackMessage, executionContext = {}) {
       const preparePayload = {
         fromAddress: mapping.mapped.fromAddress,
         toAddress: mapping.mapped.toAddress,
-        amount: mapping.mapped.amount
+        amount: mapping.mapped.amount,
+        chain: selectedChain
       };
       if (mapping.mapped.tokenId !== undefined) {
         preparePayload.tokenId = mapping.mapped.tokenId;
+      }
+      if (mapping.mapped.tokenAddress !== undefined) {
+        preparePayload.tokenAddress = mapping.mapped.tokenAddress;
       }
 
       const prepareResponse = await axios.post(`${BASE_URL}/transfer/prepare`, preparePayload, {
@@ -1092,6 +1130,7 @@ async function executeToolStep(step, fallbackMessage, executionContext = {}) {
       if (canSignTransferWithPkp) {
         const signedTransaction = await signAndBroadcastTransactionWithPkp({
           pkpPublicKey: executionContext.pkpPublicKey,
+          chain: selectedChain,
           transaction: {
             to: prepared.transaction?.to || mapping.mapped.toAddress,
             data: prepared.transaction?.data || null,
@@ -1116,6 +1155,7 @@ async function executeToolStep(step, fallbackMessage, executionContext = {}) {
               gasUsed: signedTransaction.gasUsed,
               status: signedTransaction.status,
               explorerUrl: signedTransaction.explorerUrl,
+              chain: selectedChain,
               walletType: 'pkp',
               signer: 'lit-pkp'
             }
@@ -1501,14 +1541,16 @@ function formatToolResponse(toolResults) {
         return `Current prices: ${formatted}.`;
       }
       case 'get_balance': {
-        return `Balance for ${payload.address}: ${payload.balance} ETH.`;
+        const symbol = payload.nativeCurrency || 'ETH';
+        return `Balance for ${payload.address}: ${payload.balance} ${symbol}.`;
       }
       case 'transfer': {
         if (payload.requiresMetaMask || payload.requiresSigning || payload.prepared) {
           const details = payload.details || {};
           const to = details.toAddress || payload.transaction?.to || 'unknown';
           const amount = details.amount || 'unknown';
-          return `Transfer prepared for wallet signing: ${amount} ETH to ${to}. Please sign this transaction in your wallet/Lit flow.`;
+          const symbol = details.tokenSymbol || payload.tokenSymbol || payload.nativeCurrency || details.nativeCurrency || 'ETH';
+          return `Transfer prepared for wallet signing: ${amount} ${symbol} to ${to}. Please sign this transaction in your wallet/Lit flow.`;
         }
         if (payload.walletType === 'pkp') {
           return `Transfer completed via Lit PKP. Tx: ${payload.transactionHash || payload.txHash || 'unknown'}.`;
@@ -1585,7 +1627,8 @@ function formatToolResponse(toolResults) {
       }
       case 'estimate_gas': {
         const n = payload.suggested?.normal;
-        return `Current gas: base fee ${payload.baseFee}, normal max fee ${n?.maxFeePerGas}. ETH transfer ~${n?.estimatedTxCostEth?.transfer} ETH.`;
+        const symbol = payload.nativeCurrency || 'ETH';
+        return `Current gas on ${payload.network || payload.chain || 'the selected chain'}: base fee ${payload.baseFee}, normal max fee ${n?.maxFeePerGas}. Native transfer ~${n?.estimatedTxCostEth?.transfer} ${symbol}.`;
       }
       case 'simulate_gas': {
         return `Gas estimate: ${payload.gasEstimateWithBuffer} units (with buffer). Est. cost: ${payload.estimatedCostWithBufferEth} ETH.`;
@@ -1612,7 +1655,13 @@ function formatToolResponse(toolResults) {
         return `Retryable ticket ${payload.ticketId?.slice(0, 12)}... status: ${payload.ticketStatus}. L1: ${payload.l1?.status}. ${payload.note || ''}`;
       }
       case 'schedule_transfer': {
-        return `Scheduled transfer created (ID: ${payload.id}). ${payload.note || ''} Type: ${payload.type}. Amount: ${payload.amount}. To: ${payload.toAddress?.slice(0, 10)}...`;
+        return `Scheduled transfer created (ID: ${payload.id}) on ${payload.network || payload.chain || 'the selected chain'}. ${payload.note || ''} Type: ${payload.type}. Amount: ${payload.amount}. To: ${payload.toAddress?.slice(0, 10)}...`;
+      }
+      case 'create_savings_plan': {
+        return `Savings plan created (ID: ${payload.id}) on ${payload.network || payload.chain || 'the selected chain'}. ${payload.note || ''}`;
+      }
+      case 'schedule_payout': {
+        return `Scheduled payout created (ID: ${payload.id}) on ${payload.network || payload.chain || 'the selected chain'}. ${payload.note || ''}`;
       }
       case 'schedule_reminder': {
         return `Scheduled reminder created (ID: ${payload.id}). ${payload.note || ''}`;

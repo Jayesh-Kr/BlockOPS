@@ -353,6 +353,7 @@ CREATE TABLE IF NOT EXISTS scheduled_transfers (
   to_address      TEXT NOT NULL,
   amount          TEXT NOT NULL,
   token_address   TEXT,                   -- NULL = native ETH
+  chain           TEXT NOT NULL DEFAULT 'arbitrum-sepolia',
   cron_expression TEXT NOT NULL,
   label           TEXT,
   type            TEXT NOT NULL DEFAULT 'recurring' CHECK (type IN ('one_shot', 'recurring')),
@@ -397,6 +398,7 @@ CREATE TABLE IF NOT EXISTS scheduled_chat_reminders (
   delivery_platform   TEXT NOT NULL CHECK (delivery_platform IN ('web', 'telegram')),
   telegram_chat_id    TEXT,
   task_type           TEXT NOT NULL CHECK (task_type IN ('balance', 'portfolio', 'price')),
+  chain               TEXT NOT NULL DEFAULT 'arbitrum-sepolia',
   wallet_address      TEXT,
   token_query         TEXT,
   cron_expression     TEXT NOT NULL,
@@ -440,4 +442,3 @@ CREATE POLICY "service_role_scheduled_chat_reminders" ON scheduled_chat_reminder
   USING (auth.role() = 'service_role');
 CREATE POLICY "service_role_scheduled_chat_reminder_logs" ON scheduled_chat_reminder_logs
   USING (auth.role() = 'service_role');
-

@@ -24,10 +24,12 @@
 
 const cron     = require('node-cron');
 const { ethers } = require('ethers');
+const { getChainConfig, DEFAULT_CHAIN } = require('../config/constants');
 const { getProvider, getWallet } = require('../utils/blockchain');
 const { successResponse, errorResponse, getTxExplorerUrl } = require('../utils/helpers');
 const { fireEvent } = require('../services/webhookService');
 const supabase = require('../config/supabase');
+const { getChainFromRequest, getChainMetadata, normalizeChainId } = require('../utils/chains');
 
 // In-memory map of live cron tasks: jobId → cron.ScheduledTask
 const activeTasks = new Map();
@@ -250,8 +252,10 @@ function isJobInScope(job, scope) {
  */
 async function runTransfer(job) {
   const { id, private_key, to_address, amount, token_address } = job;
-  const provider = getProvider();
-  const wallet   = getWallet(private_key, provider);
+  const chain = normalizeChainId(job.chain || 'arbitrum-sepolia');
+  const chainConfig = getChainConfig(chain);
+  const provider = getProvider(chain);
+  const wallet   = getWallet(private_key, provider, chain);
 
   let txHash = null;
   let error  = null;
@@ -288,7 +292,8 @@ async function runTransfer(job) {
         from:      wallet.address,
         to:        to_address,
         amount,
-        token:     token_address || 'ETH'
+        token:     token_address || chainConfig.nativeCurrency.symbol,
+        chain
       });
     } catch (webhookError) {
       console.warn(`[Schedule] Webhook dispatch failed for job ${id}: ${webhookError.message}`);
@@ -310,7 +315,8 @@ async function runTransfer(job) {
       last_run_at:    new Date().toISOString(),
       last_tx_hash:   txHash,
       last_error:     error,
-      run_count:      (job.run_count || 0) + 1
+      run_count:      (job.run_count || 0) + 1,
+      updated_at:     new Date().toISOString()
     };
     try {
       const { error: updateError } = await supabase
@@ -448,6 +454,8 @@ async function createSchedule(req, res) {
       cronExpression,
       label
     } = req.body;
+    const chain = getChainFromRequest(req);
+    const chainMetadata = getChainMetadata(chain);
 
     if (!privateKey)      return res.status(400).json(errorResponse('privateKey is required'));
     if (!toAddress)        return res.status(400).json(errorResponse('toAddress is required'));
@@ -487,8 +495,8 @@ async function createSchedule(req, res) {
     }
 
     // Validate address
-    const provider = getProvider();
-    const wallet = getWallet(privateKey, provider);
+    const provider = getProvider(chain);
+    const wallet = getWallet(privateKey, provider, chain);
 
     const jobRow = {
       agent_id:        agentId,
@@ -496,6 +504,7 @@ async function createSchedule(req, res) {
       to_address:      toAddress,
       amount:          String(amount),
       token_address:   tokenAddress || null,
+      chain,
       cron_expression: normalizedCronExpression,
       label:           label || null,
       type:            oneShot ? 'one_shot' : 'recurring',
@@ -531,10 +540,11 @@ async function createSchedule(req, res) {
       cronExpression:  normalizedCronExpression,
       requestedCronExpression: cronExpression,
       toAddress,
-      amount:          `${amount} ${tokenAddress ? '(ERC20)' : 'ETH'}`,
+      amount:          `${amount} ${tokenAddress ? '(ERC20)' : chainMetadata.nativeCurrency}`,
       tokenAddress:    tokenAddress || null,
       walletAddress:   wallet.address,
       status:          'active',
+      ...chainMetadata,
       note:            oneShot
         ? `Will run once at ${new Date(normalizedCronExpression).toISOString()}${normalizedSchedule.source === 'relative' ? ` (parsed from "${cronExpression}")` : ''}`
         : `Will run on schedule: "${normalizedCronExpression}" (UTC)`
@@ -558,7 +568,7 @@ async function listSchedules(req, res) {
     const scope = await resolveScheduleAccessScope(req);
     let query = supabase
       .from('scheduled_transfers')
-      .select('id, label, type, cron_expression, to_address, amount, token_address, wallet_address, status, run_count, last_run_at, last_tx_hash, last_error, created_at')
+      .select('id, label, type, cron_expression, to_address, amount, token_address, chain, wallet_address, status, run_count, last_run_at, last_tx_hash, last_error, created_at')
       .order('created_at', { ascending: false });
 
     query = applyScheduleScope(query, scope);

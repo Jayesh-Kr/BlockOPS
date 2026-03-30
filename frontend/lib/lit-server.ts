@@ -6,9 +6,10 @@ import { ethers } from "ethers"
 import { createAuthManager, storagePlugins, ViemAccountAuthenticator } from "@lit-protocol/auth"
 import { createLitClient } from "@lit-protocol/lit-client"
 import { nagaTest } from "@lit-protocol/networks"
-import { arbitrumSepolia } from "viem/chains"
+import { arbitrumSepolia, flowTestnet } from "viem/chains"
 import { createPublicClient, createWalletClient, http, type Chain, type Hex } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
+import { getChainConfig, normalizeChainId, type SupportedChainId } from "./chains"
 
 interface LitActionRequest {
   code: string
@@ -245,14 +246,24 @@ function getAuthConfig() {
   }
 }
 
-function getArbitrumClients(chain: Chain = arbitrumSepolia) {
-  const { arbitrumRpcUrl } = getPkpConfig()
-  const transport = http(arbitrumRpcUrl)
+function resolveViemChain(chain?: SupportedChainId | Chain): Chain {
+  if (typeof chain === "object" && chain?.id) {
+    return chain
+  }
+
+  const normalized = normalizeChainId(typeof chain === "string" ? chain : undefined)
+  return normalized === "flow-testnet" ? flowTestnet : arbitrumSepolia
+}
+
+function getChainClients(chain: Chain = arbitrumSepolia) {
+  const viemChain = resolveViemChain(chain)
+  const chainConfig = getChainConfig(viemChain.id === 545 ? "flow-testnet" : "arbitrum-sepolia")
+  const transport = http(chainConfig.viemChain.rpcUrls.default.http[0])
 
   return {
-    chain,
+    chain: viemChain,
     publicClient: createPublicClient({
-      chain,
+      chain: viemChain,
       transport,
     }),
     transport,
@@ -269,16 +280,16 @@ async function createPkpWalletClient(pkpPublicKey: string, chain: Chain = arbitr
     authConfig: getAuthConfig(),
     litClient,
   })
-  const { publicClient, transport } = getArbitrumClients(chain)
+  const { publicClient, transport, chain: viemChain } = getChainClients(chain)
   const pkpAccount = await litClient.getPkpViemAccount({
     pkpPublicKey,
     authContext,
-    chainConfig: chain,
+    chainConfig: viemChain,
   })
 
   const walletClient = createWalletClient({
     account: pkpAccount,
-    chain,
+    chain: viemChain,
     transport,
   })
 
@@ -387,11 +398,13 @@ export async function mintPkpWalletOnNagaTest() {
 export async function signAndBroadcastTransactionWithPkp(params: {
   pkpPublicKey: string
   transaction: PkpTransactionRequest
-  chain?: Chain
+  chain?: SupportedChainId | Chain
 }) {
+  const viemChain = resolveViemChain(params.chain)
+  const chainConfig = getChainConfig(viemChain.id === 545 ? "flow-testnet" : "arbitrum-sepolia")
   const { walletClient, publicClient, pkpAccount } = await createPkpWalletClient(
     params.pkpPublicKey,
-    params.chain || arbitrumSepolia
+    viemChain
   )
 
   const hash = await walletClient.sendTransaction({
@@ -402,7 +415,7 @@ export async function signAndBroadcastTransactionWithPkp(params: {
 
   return {
     hash,
-    explorerUrl: `https://sepolia.arbiscan.io/tx/${hash}`,
+    explorerUrl: `${chainConfig.explorerBaseUrl}/tx/${hash}`,
     blockNumber: Number(receipt.blockNumber),
     gasUsed: receipt.gasUsed.toString(),
     status: receipt.status === "success" ? "success" : "failed",

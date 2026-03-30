@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
 import { signAndBroadcastTransactionWithPkp } from "@/lib/lit-server"
+import { normalizeChainId } from "@/lib/chains"
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const pkpPublicKey = typeof body?.pkpPublicKey === "string" ? body.pkpPublicKey : ""
+    const chain = normalizeChainId(typeof body?.chain === "string" ? body.chain : undefined)
     const transaction =
       body?.transaction && typeof body.transaction === "object" ? body.transaction : null
 
@@ -21,6 +23,7 @@ export async function POST(request: NextRequest) {
 
     const result = await signAndBroadcastTransactionWithPkp({
       pkpPublicKey,
+      chain,
       transaction,
     })
 

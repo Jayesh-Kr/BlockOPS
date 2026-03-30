@@ -1,5 +1,6 @@
 import type { User, WalletType } from './supabase'
 import { hasStoredSigningKey } from './lit-private-key'
+import type { SupportedChainId } from './chains'
 
 export interface PkpWalletResult {
   walletType: 'pkp'
@@ -86,6 +87,7 @@ export async function mintPkpWallet(): Promise<PkpWalletResult> {
 export async function signTransactionWithPkp(params: {
   pkpPublicKey: string
   pkpTokenId?: string | null
+  chain?: SupportedChainId
   transaction: PkpTransactionRequest
 }): Promise<PkpTransactionResult> {
   const response = await fetch('/api/lit/pkp/sign', {

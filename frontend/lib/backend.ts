@@ -11,6 +11,7 @@ import type {
   AgentChatResponse, 
   BackendHealthResponse 
 } from './types'
+import type { SupportedChainId } from './chains'
 
 // Backend URLs from environment
 function trimTrailingSlash(value: string): string {
@@ -55,6 +56,7 @@ export interface ConversationChatRequest {
   agentId: string
   userId: string
   message: string
+  chain?: SupportedChainId
   conversationId?: string
   systemPrompt?: string
   walletAddress?: string
@@ -129,6 +131,7 @@ export interface ReminderJob {
   delivery_platform?: 'web' | 'telegram' | string
   telegram_chat_id?: string | null
   task_type?: 'balance' | 'portfolio' | 'price' | string
+  chain?: SupportedChainId | string | null
   wallet_address?: string | null
   token_query?: string | null
   cron_expression?: string | null
@@ -162,6 +165,7 @@ export interface CancelReminderResponse {
 export interface ScheduledTransferJob {
   id: string
   agent_id?: string | null
+  chain?: SupportedChainId | string | null
   wallet_address?: string | null
   to_address?: string | null
   amount?: string | null

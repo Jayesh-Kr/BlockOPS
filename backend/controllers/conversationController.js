@@ -9,6 +9,8 @@ const {
   sanitizeToolResultsForResponse
 } = require('../services/toolAuditLogService');
 const { fireEvent } = require('../services/webhookService');
+const { DEFAULT_CHAIN, getChainConfig } = require('../config/constants');
+const { buildUnsupportedToolError, isToolSupportedOnChain, normalizeChainId } = require('../utils/chains');
 
 const IN_MEMORY_MESSAGE_LIMIT = 30;
 const DEFAULT_AUDIT_WAIT_MS = 8000;
@@ -181,8 +183,11 @@ async function chat(req, res) {
       deliveryPlatform,
       telegramChatId,
       defaultEmailTo,
-      userEmail
+      userEmail,
+      chain
     } = req.body;
+    const selectedChain = normalizeChainId(chain || DEFAULT_CHAIN);
+    const chainConfig = getChainConfig(selectedChain);
 
     // Validation
     if (!agentId || !userId || !message) {
@@ -192,7 +197,7 @@ async function chat(req, res) {
     }
 
     // Fire webhook for inbound message (non-blocking)
-    fireEvent(agentId, 'agent.message', { userId, message, walletAddress: walletAddress || null });
+    fireEvent(agentId, 'agent.message', { userId, message, walletAddress: walletAddress || null, chain: selectedChain });
     if (walletAddress) {
       console.log('[Chat] User wallet address:', walletAddress);
     } else {
@@ -330,7 +335,30 @@ async function chat(req, res) {
     // Check if the message requires tools using intelligent AI routing
     console.log('[Chat] Analyzing message for tool requirements...');
     
-    const routingPlan = await intelligentToolRouting(truncatedMessage, messages);
+    const routingPlan = await intelligentToolRouting(truncatedMessage, messages, {
+      chain: selectedChain,
+      chainId: chainConfig.chainId,
+      networkName: chainConfig.name
+    });
+
+    if (routingPlan.execution_plan?.steps?.length) {
+      routingPlan.execution_plan.steps = routingPlan.execution_plan.steps.map((step) => {
+        if (!step || !step.tool) return step;
+
+        const nextParameters = {
+          ...(step.parameters || {})
+        };
+
+        if (!nextParameters.chain) {
+          nextParameters.chain = selectedChain;
+        }
+
+        return {
+          ...step,
+          parameters: nextParameters
+        };
+      });
+    }
 
     const TOOL_ALIASES = {
       tx_status: 'lookup_transaction',
@@ -382,10 +410,38 @@ async function chat(req, res) {
       isOffTopic: routingPlan.is_off_topic,
       requiresTools: routingPlan.requires_tools,
       complexity: routingPlan.complexity,
+      chain: selectedChain,
       executionType: routingPlan.execution_plan?.type,
       toolCount: routingPlan.execution_plan?.steps?.length || 0,
       blockedByToolPermissions
     });
+
+    const unsupportedStep = routingPlan.execution_plan?.steps?.find((step) => !isToolSupportedOnChain(step.tool, selectedChain));
+    if (unsupportedStep) {
+      const unsupportedMessage = buildUnsupportedToolError(unsupportedStep.tool, selectedChain);
+
+      if (useSupabase) {
+        await supabase
+          .from('conversation_messages')
+          .insert({
+            conversation_id: convId,
+            role: 'assistant',
+            content: unsupportedMessage
+          });
+      } else {
+        addInMemoryMessage(convId, 'assistant', unsupportedMessage);
+      }
+
+      return res.json({
+        conversationId: convId,
+        message: unsupportedMessage,
+        isNewConversation,
+        messageCount: useSupabase ? messages.length + 1 : getInMemoryMessages(convId).length,
+        hasTools: false,
+        unsupportedTool: unsupportedStep.tool,
+        chain: selectedChain
+      });
+    }
 
     if (blockedByToolPermissions) {
       const permissionMessage = `I identified a blockchain action request, but this agent is not allowed to run the required tools: ${requestedTools.join(', ')}. No transaction was sent and no email was sent. Please enable those tools for this agent and retry.`;
@@ -571,10 +627,11 @@ async function chat(req, res) {
       
       try {
         const preferDirectExecution =
+          selectedChain !== 'arbitrum-sepolia' ||
           (walletType === 'pkp' &&
             routingPlan.execution_plan?.steps?.some(step => step.tool === 'transfer')) ||
           routingPlan.execution_plan?.steps?.some(step =>
-            ['schedule_reminder', 'list_reminders', 'cancel_reminder'].includes(step.tool)
+            ['schedule_reminder', 'list_reminders', 'cancel_reminder', 'create_savings_plan', 'schedule_payout'].includes(step.tool)
           );
 
         if (preferDirectExecution) {
@@ -617,7 +674,8 @@ async function chat(req, res) {
             tools: tools,
             user_message: enhancedMessage,
             private_key: privateKey || null,
-            wallet_address: walletAddress || null
+            wallet_address: walletAddress || null,
+            chain: selectedChain
           })
         });
 
@@ -691,6 +749,7 @@ async function chat(req, res) {
               telegramChatId: telegramChatId || null,
               defaultEmailTo: defaultEmailTo || userEmail || null,
               userEmail: userEmail || null,
+              chain: selectedChain,
               apiKey: req.headers['x-api-key'] || process.env.MASTER_API_KEY || null
             }
           );
@@ -718,7 +777,7 @@ async function chat(req, res) {
       console.log('[Chat] Simple conversation, using direct AI');
       
       const defaultSystemPrompt = systemPrompt || 
-        `You are a specialized blockchain operations assistant for BlockOps on Arbitrum Sepolia. You help with: cryptocurrency prices, wallet operations, token/NFT deployment, smart contracts, blockchain transactions, and email notifications.
+        `You are a specialized blockchain operations assistant for BlockOps with Flow EVM Testnet as the default execution chain and Arbitrum Sepolia available for legacy tools. You help with: cryptocurrency prices, wallet operations, automation, smart contracts, blockchain transactions, and email notifications.
         
         CRITICAL: If the user asks a question that requires blockchain data (prices, balances, calculations), and you don't have tools available, tell them what you would need to look up and suggest they ask directly (e.g., "fetch price of ETH", "check balance of 0x..."). 
         
