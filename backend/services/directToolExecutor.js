@@ -265,7 +265,37 @@ function inferReminderCancelTargets(previousResults = [], fallbackMessage = '', 
 
 function isLikelyPlaceholderValue(value) {
   if (typeof value !== 'string') return false;
-  return /\$\$?\w+\.[A-Za-z0-9_.]+/.test(value) || /\{\{.*\}\}|\{.*\}/.test(value);
+  const normalized = value.trim();
+  if (!normalized) return false;
+
+  return (
+    /\$\$?\w+\.[A-Za-z0-9_.]+/.test(normalized) ||
+    /\{\{.*\}\}|\{.*\}/.test(normalized) ||
+    /^required_from_user$/i.test(normalized) ||
+    /^\[required_from_user\]$/i.test(normalized) ||
+    /^<required_from_user>$/i.test(normalized)
+  );
+}
+
+function pickFirstUsableValue(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined) {
+      continue;
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed || isLikelyPlaceholderValue(trimmed)) {
+        continue;
+      }
+
+      return trimmed;
+    }
+
+    return value;
+  }
+
+  return null;
 }
 
 function isLikelyPlaceholderEmail(email) {
@@ -440,18 +470,20 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
     Boolean(requestWalletAddress) &&
     !explicitAddressInMessage &&
     isSelfWalletQuery(fallbackMessage);
-  const contextualAddress =
-    (shouldPreferExecutionWallet ? requestWalletAddress : null) ||
-    params.wallet_address ||
-    params.address ||
-    requestWalletAddress ||
-    explicitAddressInMessage;
-  const contextualPrivateKey =
-    params.privateKey ||
-    params.private_key ||
-    executionContext.privateKey ||
-    executionContext.private_key ||
-    extractPrivateKeyFromText(fallbackMessage);
+  const contextualAddress = pickFirstUsableValue(
+    shouldPreferExecutionWallet ? requestWalletAddress : null,
+    params.wallet_address,
+    params.address,
+    requestWalletAddress,
+    explicitAddressInMessage
+  );
+  const contextualPrivateKey = pickFirstUsableValue(
+    executionContext.privateKey,
+    executionContext.private_key,
+    params.privateKey,
+    params.private_key,
+    extractPrivateKeyFromText(fallbackMessage)
+  );
 
   switch (tool) {
     case 'fetch_price': {

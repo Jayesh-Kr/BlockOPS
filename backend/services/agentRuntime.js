@@ -27,6 +27,41 @@ const VALIDATION_ABI = [
   "function updateValidationStatus(bytes32 requestHash, uint8 status) public"
 ];
 
+let hasLoggedLegacyPersistenceMigrationWarning = false;
+
+function isMissingTableError(error, tableName) {
+  if (!error || !tableName) {
+    return false;
+  }
+
+  const haystack = `${error.message || ''} ${error.details || ''} ${error.hint || ''}`.toLowerCase();
+  const normalizedTable = String(tableName).toLowerCase();
+
+  return (
+    haystack.includes(`public.${normalizedTable}`) ||
+    haystack.includes(`relation \"${normalizedTable}\"`) ||
+    haystack.includes(`${normalizedTable} does not exist`) ||
+    haystack.includes(`table '${normalizedTable}'`) ||
+    haystack.includes(`table \"${normalizedTable}\"`)
+  );
+}
+
+function shouldSkipLegacyExecutionPersistence(error) {
+  return isMissingTableError(error, 'agent_executions') || isMissingTableError(error, 'tool_executions');
+}
+
+function logLegacyPersistenceMigrationWarning() {
+  if (hasLoggedLegacyPersistenceMigrationWarning) {
+    return;
+  }
+
+  hasLoggedLegacyPersistenceMigrationWarning = true;
+  console.warn(
+    '[Runtime] Skipping legacy execution persistence because agent_executions/tool_executions tables are not available. ' +
+      'Tool audit logs continue in agent_tool_execution_logs.'
+  );
+}
+
 /**
  * BlockOps Agent Runtime
  * Implements the Plan -> Execute -> Verify -> Decide (PEVD) loop with ERC-8004
@@ -269,7 +304,13 @@ class BlockOpsAgentRuntime {
         .select()
         .single();
 
-      if (execError) throw execError;
+      if (execError) {
+        if (shouldSkipLegacyExecutionPersistence(execError)) {
+          logLegacyPersistenceMigrationWarning();
+          return;
+        }
+        throw execError;
+      }
 
       // 3. Create tool_execution records
       const toolExecutions = executionResult.results.map(result => {
@@ -290,7 +331,13 @@ class BlockOpsAgentRuntime {
           .from('tool_executions')
           .insert(toolExecutions);
         
-        if (toolError) throw toolError;
+        if (toolError) {
+          if (shouldSkipLegacyExecutionPersistence(toolError)) {
+            logLegacyPersistenceMigrationWarning();
+            return;
+          }
+          throw toolError;
+        }
       }
 
       console.log(`[Runtime] Execution persisted to database for run ${execution.id}`);
@@ -362,7 +409,11 @@ class BlockOpsAgentRuntime {
             agent: delegation.targetAgent
           });
         } catch (err) {
-          console.warn(`[Runtime] Delegation failed for tool ${step.tool}:`, err.message);
+          if (/no trusted agents found/i.test(String(err.message || ''))) {
+            console.log(`[Runtime] Delegation skipped for tool ${step.tool}: ${err.message}`);
+          } else {
+            console.warn(`[Runtime] Delegation failed for tool ${step.tool}:`, err.message);
+          }
         }
       }
     }
