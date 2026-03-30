@@ -836,25 +836,6 @@ async function chat(req, res) {
               decision: primaryRuntimeResult.decision,
               verification: primaryRuntimeResult.verification,
               agent_log: runtime.exportLogs()
-        try {
-          const directExecResult = await executeToolsDirectlyService(
-            routingPlan,
-            truncatedMessage,
-            {
-              walletAddress: walletAddress || null,
-              walletType: walletType || null,
-              pkpPublicKey: pkpPublicKey || null,
-              pkpTokenId: pkpTokenId || null,
-              privateKey: privateKey || null,
-              conversationId: convId,
-              agentId,
-              userId,
-              deliveryPlatform: deliveryPlatform || 'web',
-              telegramChatId: telegramChatId || null,
-              defaultEmailTo: defaultEmailTo || userEmail || null,
-              userEmail: userEmail || null,
-              chain: requestedChain,
-              apiKey: req.headers['x-api-key'] || process.env.MASTER_API_KEY || null
             }
           };
         } else {
@@ -873,9 +854,18 @@ async function chat(req, res) {
                   truncatedMessage,
                   {
                     walletAddress: walletAddress || null,
+                    walletType: walletType || null,
+                    pkpPublicKey: pkpPublicKey || null,
+                    pkpTokenId: pkpTokenId || null,
                     privateKey: privateKey || null,
+                    conversationId: convId,
+                    agentId,
+                    userId,
+                    deliveryPlatform: deliveryPlatform || 'web',
+                    telegramChatId: telegramChatId || null,
                     defaultEmailTo: defaultEmailTo || userEmail || null,
                     userEmail: userEmail || null,
+                    chain: requestedChain,
                     apiKey: req.headers['x-api-key'] || process.env.MASTER_API_KEY || null
                   }
                 );
