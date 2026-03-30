@@ -61,6 +61,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
+type AgentRegistryRecord = {
+  id: string
+  agentId: string
+  status: string
+  version: number
+  metadata: any
+  updatedAt?: string
+}
+
 export default function MyAgents() {
   const router = useRouter()
   const { ready, authenticated, user, logout, loading: authLoading, isWalletLogin, showPrivateKeySetup, setShowPrivateKeySetup, syncUser, pkpSchemaReady, dbUser } = useAuth()
@@ -73,6 +82,10 @@ export default function MyAgents() {
   const [copiedItem, setCopiedItem] = useState<string | null>(null)
   const [walletModalOpen, setWalletModalOpen] = useState(false)
   const [registeringAgentId, setRegisteringAgentId] = useState<string | null>(null)
+  const [registryDialogOpen, setRegistryDialogOpen] = useState(false)
+  const [selectedAgentForRegistry, setSelectedAgentForRegistry] = useState<Agent | null>(null)
+  const [selectedRegistryRecord, setSelectedRegistryRecord] = useState<AgentRegistryRecord | null>(null)
+  const [loadingRegistryAgentId, setLoadingRegistryAgentId] = useState<string | null>(null)
 
   useEffect(() => {
     if (ready && !authenticated) {
@@ -177,6 +190,40 @@ export default function MyAgents() {
 
   const handleAgentClick = (agentId: string) => {
     router.push(`/agent-builder?agent=${agentId}`)
+  }
+
+  const handleViewRegistryMetadata = async (agent: Agent) => {
+    setSelectedAgentForRegistry(agent)
+    setSelectedRegistryRecord(null)
+    setRegistryDialogOpen(true)
+    setLoadingRegistryAgentId(agent.id)
+
+    try {
+      const query = user?.id ? `?userId=${encodeURIComponent(user.id)}` : ""
+      const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/agents/${agent.id}/registry${query}`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": BLOCKCHAIN_API_KEY,
+        },
+      })
+
+      const data = await response.json()
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Failed to load registry metadata")
+      }
+
+      setSelectedRegistryRecord(data.registry || null)
+    } catch (error: any) {
+      console.error("Error fetching registry metadata:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load registry metadata",
+        variant: "destructive",
+      })
+    } finally {
+      setLoadingRegistryAgentId(null)
+    }
   }
 
   const copyToClipboard = (text: string, label: string) => {
@@ -340,6 +387,19 @@ export default function MyAgents() {
                               <Globe className="mr-2 h-3.5 w-3.5" />
                             )}
                             Register On-Chain
+                          </DropdownMenuItem>
+                        )}
+                        {agent.on_chain_id && (
+                          <DropdownMenuItem
+                            onClick={() => handleViewRegistryMetadata(agent)}
+                            disabled={loadingRegistryAgentId === agent.id}
+                          >
+                            {loadingRegistryAgentId === agent.id ? (
+                              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Layers className="mr-2 h-3.5 w-3.5" />
+                            )}
+                            View Registry Metadata
                           </DropdownMenuItem>
                         )}
                         <DropdownMenuItem onClick={() => handleAgentClick(agent.id)}>
@@ -579,6 +639,87 @@ console.log(data);`}
                   Never expose your API key in client-side code. Store it in environment variables and rotate if compromised.
                 </p>
               </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Registry Metadata Dialog */}
+        <Dialog open={registryDialogOpen} onOpenChange={setRegistryDialogOpen}>
+          <DialogContent className="max-w-2xl sm:max-w-2xl p-0 max-h-[85vh] overflow-hidden">
+            <DialogHeader className="px-6 pt-6 pb-3 border-b border-border">
+              <DialogTitle className="text-base font-semibold">
+                Registry Metadata — {selectedAgentForRegistry?.name}
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                View the stored on-chain registration metadata for this agent.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="overflow-y-auto px-6 pb-6">
+              {loadingRegistryAgentId === selectedAgentForRegistry?.id ? (
+                <div className="flex items-center justify-center py-10">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : selectedRegistryRecord ? (
+                <div className="space-y-4 pt-4">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div className="rounded-md border border-border bg-muted/20 px-3 py-2">
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Status</p>
+                      <p className="mt-1 text-xs text-foreground">{selectedRegistryRecord.status || "active"}</p>
+                    </div>
+                    <div className="rounded-md border border-border bg-muted/20 px-3 py-2">
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Version</p>
+                      <p className="mt-1 text-xs text-foreground">{selectedRegistryRecord.version}</p>
+                    </div>
+                    <div className="rounded-md border border-border bg-muted/20 px-3 py-2">
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Updated</p>
+                      <p className="mt-1 text-xs text-foreground">{selectedRegistryRecord.updatedAt || "-"}</p>
+                    </div>
+                  </div>
+
+                  {selectedRegistryRecord.metadata?.onChainRegistration?.transactionExplorerUrl && (
+                    <a
+                      href={selectedRegistryRecord.metadata.onChainRegistration.transactionExplorerUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs text-foreground hover:bg-muted/40"
+                    >
+                      <Globe className="h-3.5 w-3.5" />
+                      View Transaction on Explorer
+                    </a>
+                  )}
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Metadata JSON
+                      </label>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => copyToClipboard(JSON.stringify(selectedRegistryRecord.metadata || {}, null, 2), "Registry metadata")}
+                      >
+                        {copiedItem === "Registry metadata" ? (
+                          <Check className="mr-1.5 h-3 w-3" />
+                        ) : (
+                          <Copy className="mr-1.5 h-3 w-3" />
+                        )}
+                        Copy
+                      </Button>
+                    </div>
+                    <pre className="rounded-md border border-border bg-muted/30 p-3 overflow-x-auto text-[11px] font-mono leading-relaxed text-foreground">
+                      {JSON.stringify(selectedRegistryRecord.metadata || {}, null, 2)}
+                    </pre>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-md border border-border bg-muted/20 px-3 py-4 mt-4">
+                  <p className="text-sm text-muted-foreground">
+                    No registry metadata found for this agent.
+                  </p>
+                </div>
+              )}
             </div>
           </DialogContent>
         </Dialog>

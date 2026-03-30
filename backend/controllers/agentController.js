@@ -89,6 +89,193 @@ function extractOnChainIdFromReceipt(receipt, identityAbi, identityAddress) {
   return null;
 }
 
+const ARBITRUM_CHAIN_ID = 421614;
+const ARBITRUM_CHAIN = 'arbitrum-sepolia';
+const ARBITRUM_NETWORK_NAME = 'Arbitrum Sepolia';
+const DEFAULT_ARBITRUM_EXPLORER_BASE_URL = 'https://sepolia.arbiscan.io';
+
+function buildTransactionExplorerUrl(txHash) {
+  if (!txHash) return null;
+
+  const explorerBaseUrl = (process.env.ARBITRUM_SEPOLIA_EXPLORER_URL || DEFAULT_ARBITRUM_EXPLORER_BASE_URL)
+    .replace(/\/+$/, '');
+  return `${explorerBaseUrl}/tx/${txHash}`;
+}
+
+function isMissingRelationError(error, relationName) {
+  if (!error || !relationName) return false;
+  const text = `${error.message || ''} ${error.details || ''} ${error.hint || ''}`.toLowerCase();
+  return text.includes(`relation "${String(relationName).toLowerCase()}"`) && text.includes('does not exist');
+}
+
+function toPlainObject(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value;
+  }
+  return {};
+}
+
+function toTextArray(value, fallback = []) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return fallback;
+}
+
+async function findAgentRegistrationEventProof(provider, identityAddress, onChainId) {
+  if (!provider || !identityAddress || onChainId == null) {
+    return null;
+  }
+
+  try {
+    const eventTopic = ethers.id('AgentRegistered(uint256,address,string)');
+    const onChainIdTopic = ethers.zeroPadValue(ethers.toBeHex(BigInt(onChainId)), 32);
+    const logs = await provider.getLogs({
+      address: identityAddress,
+      topics: [eventTopic, onChainIdTopic],
+      fromBlock: 0,
+      toBlock: 'latest',
+    });
+
+    if (!logs || logs.length === 0) {
+      return null;
+    }
+
+    const latestLog = logs[logs.length - 1];
+    return {
+      transactionHash: latestLog.transactionHash || null,
+      blockNumber: latestLog.blockNumber || null,
+      logIndex: latestLog.index ?? latestLog.logIndex ?? null,
+    };
+  } catch (error) {
+    console.warn('[Agent] Failed to recover AgentRegistered proof from logs:', error.message);
+    return null;
+  }
+}
+
+async function upsertAgentRegistryProof({
+  agentId,
+  agent,
+  onChainId,
+  identityAddress,
+  transactionHash,
+  blockNumber,
+  logIndex,
+  operatorWallet,
+  agentURI,
+}) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase is not configured.' };
+  }
+
+  const { data: existingRegistry, error: existingError } = await supabase
+    .from('agent_registry')
+    .select('version, metadata, status, capabilities, supported_chains, metadata_cid, metadata_uri')
+    .eq('agent_id', agentId)
+    .maybeSingle();
+
+  if (existingError) {
+    if (isMissingRelationError(existingError, 'agent_registry')) {
+      return {
+        success: false,
+        error: 'The agent_registry table is missing. Run backend/database/migrations/003_agent_registry_and_filecoin_audit.sql and retry.',
+      };
+    }
+
+    return { success: false, error: existingError.message };
+  }
+
+  const nowIso = new Date().toISOString();
+  const existingMetadata = toPlainObject(existingRegistry?.metadata);
+  const existingProof = toPlainObject(existingMetadata.onChainRegistration);
+  const proofTxHash = transactionHash || existingProof.transactionHash || null;
+  const proofExplorerUrl = buildTransactionExplorerUrl(proofTxHash);
+
+  const registrationProof = {
+    standard: 'ERC-8004',
+    chainId: ARBITRUM_CHAIN_ID,
+    chain: ARBITRUM_CHAIN,
+    network: ARBITRUM_NETWORK_NAME,
+    identityRegistryAddress: identityAddress,
+    onChainId: String(onChainId),
+    transactionHash: proofTxHash,
+    transactionExplorerUrl: proofExplorerUrl,
+    blockNumber: blockNumber ?? existingProof.blockNumber ?? null,
+    logIndex: logIndex ?? existingProof.logIndex ?? null,
+    manifestUri: agentURI || existingProof.manifestUri || null,
+    registeredAt: existingProof.registeredAt || nowIso,
+    lastSyncedAt: nowIso,
+  };
+
+  const eip155IdentityRegistry = identityAddress
+    ? `eip155:${ARBITRUM_CHAIN_ID}:${identityAddress}`
+    : null;
+  const eip155ReputationRegistry = process.env.REPUTATION_REGISTRY_ADDRESS
+    ? `eip155:${ARBITRUM_CHAIN_ID}:${process.env.REPUTATION_REGISTRY_ADDRESS}`
+    : null;
+  const eip155ValidationRegistry = process.env.VALIDATION_REGISTRY_ADDRESS
+    ? `eip155:${ARBITRUM_CHAIN_ID}:${process.env.VALIDATION_REGISTRY_ADDRESS}`
+    : null;
+
+  const metadata = {
+    ...existingMetadata,
+    erc8004: {
+      identityRegistry: eip155IdentityRegistry,
+      reputationRegistry: eip155ReputationRegistry,
+      validationRegistry: eip155ValidationRegistry,
+      agentId: String(onChainId),
+      operatorWallet: operatorWallet || agent.wallet_address || null,
+    },
+    onChainRegistration: registrationProof,
+  };
+
+  const supportedChains = Array.from(new Set([
+    ...toTextArray(existingRegistry?.supported_chains, []),
+    ARBITRUM_CHAIN,
+  ])).filter(Boolean);
+
+  const capabilities = toTextArray(agent.enabled_tools, toTextArray(existingRegistry?.capabilities, []));
+
+  const upsertPayload = {
+    agent_id: agentId,
+    user_id: agent.user_id,
+    display_name: agent.name,
+    description: agent.description || null,
+    capabilities,
+    supported_chains: supportedChains.length ? supportedChains : [ARBITRUM_CHAIN],
+    metadata,
+    status: existingRegistry?.status || 'active',
+    version: (existingRegistry?.version || 0) + 1,
+    metadata_cid: existingRegistry?.metadata_cid || null,
+    metadata_uri: existingRegistry?.metadata_uri || null,
+    updated_at: nowIso,
+  };
+
+  const { data: savedRegistry, error: upsertError } = await supabase
+    .from('agent_registry')
+    .upsert(upsertPayload, { onConflict: 'agent_id' })
+    .select('version, metadata')
+    .single();
+
+  if (upsertError) {
+    return { success: false, error: upsertError.message };
+  }
+
+  return {
+    success: true,
+    version: savedRegistry?.version || upsertPayload.version,
+    proof: toPlainObject(savedRegistry?.metadata).onChainRegistration || registrationProof,
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /agents — Create a new agent
 // ─────────────────────────────────────────────────────────────────────────────
@@ -547,16 +734,52 @@ async function registerAgentOnChain(req, res) {
       });
     }
 
+    // ERC-8004 registries are deployed on Arbitrum Sepolia.
+    const provider = getProvider(ARBITRUM_CHAIN);
+
+    const identityAddr = process.env.IDENTITY_REGISTRY_ADDRESS;
+    if (!identityAddr) {
+      return res.status(500).json({ success: false, error: 'Identity Registry address not configured' });
+    }
+
+    const agentURI = `https://blockops.in/api/v1/agents/${id}/manifest`;
+
     if (agent.on_chain_id) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Agent already registered on-chain', 
-        onChainId: agent.on_chain_id 
+      const recoveredProof = await findAgentRegistrationEventProof(provider, identityAddr, agent.on_chain_id);
+      const registrySync = await upsertAgentRegistryProof({
+        agentId: id,
+        agent,
+        onChainId: agent.on_chain_id,
+        identityAddress: identityAddr,
+        transactionHash: recoveredProof?.transactionHash || null,
+        blockNumber: recoveredProof?.blockNumber || null,
+        logIndex: recoveredProof?.logIndex || null,
+        operatorWallet: agent.wallet_address || null,
+        agentURI,
+      });
+
+      if (!registrySync.success) {
+        return res.status(500).json({
+          success: false,
+          error: `Agent is already registered on-chain, but registry proof sync failed: ${registrySync.error}`,
+          onChainId: agent.on_chain_id,
+          transactionHash: recoveredProof?.transactionHash || null,
+          explorerUrl: buildTransactionExplorerUrl(recoveredProof?.transactionHash || null),
+        });
+      }
+
+      return res.json({
+        success: true,
+        alreadyRegistered: true,
+        onChainId: agent.on_chain_id,
+        transactionHash: recoveredProof?.transactionHash || registrySync.proof?.transactionHash || null,
+        explorerUrl: buildTransactionExplorerUrl(recoveredProof?.transactionHash || registrySync.proof?.transactionHash || null),
+        registryVersion: registrySync.version,
+        registryProof: registrySync.proof,
+        message: 'Agent already registered on-chain. Registry proof synchronized for verification.',
       });
     }
 
-    // ERC-8004 registries are deployed on Arbitrum Sepolia.
-    const provider = getProvider('arbitrum-sepolia');
     let wallet = null;
 
     try {
@@ -578,11 +801,6 @@ async function registerAgentOnChain(req, res) {
       });
     }
 
-    const identityAddr = process.env.IDENTITY_REGISTRY_ADDRESS;
-    if (!identityAddr) {
-      return res.status(500).json({ success: false, error: 'Identity Registry address not configured' });
-    }
-
     const identityCode = await provider.getCode(identityAddr);
     if (!identityCode || identityCode === '0x') {
       return res.status(500).json({
@@ -600,7 +818,6 @@ async function registerAgentOnChain(req, res) {
     console.log(`[Agent] Registering ${agent.name} (${id}) on-chain...`);
     const identityContract = new ethers.Contract(identityAddr, IDENTITY_ABI, wallet);
     
-    const agentURI = `https://blockops.in/api/v1/agents/${id}/manifest`;
     const tx = await identityContract.registerAgent(wallet.address, agentURI);
     const receipt = await tx.wait();
 
@@ -640,10 +857,35 @@ async function registerAgentOnChain(req, res) {
       });
     }
 
+    const registrySync = await upsertAgentRegistryProof({
+      agentId: id,
+      agent,
+      onChainId,
+      identityAddress: identityAddr,
+      transactionHash: receipt.hash,
+      blockNumber: receipt.blockNumber || null,
+      logIndex: null,
+      operatorWallet: wallet.address,
+      agentURI,
+    });
+
+    if (!registrySync.success) {
+      return res.status(500).json({
+        success: false,
+        error: `Agent registered on-chain and saved locally, but failed to write registry proof: ${registrySync.error}`,
+        onChainId,
+        transactionHash: receipt.hash,
+        explorerUrl: buildTransactionExplorerUrl(receipt.hash),
+      });
+    }
+
     return res.json({
       success: true,
       onChainId,
       transactionHash: receipt.hash,
+      explorerUrl: buildTransactionExplorerUrl(receipt.hash),
+      registryVersion: registrySync.version,
+      registryProof: registrySync.proof,
       message: `Agent registered on-chain with ID ${onChainId}`
     });
 
@@ -765,6 +1007,34 @@ async function getAgentManifest(req, res) {
       return res.status(404).json({ success: false, error: 'Agent not found' });
     }
 
+    let registryProof = null;
+    let registryMetadata = null;
+
+    try {
+      const { data: registryRow, error: registryError } = await supabase
+        .from('agent_registry')
+        .select('metadata, metadata_cid, metadata_uri, version, updated_at')
+        .eq('agent_id', id)
+        .maybeSingle();
+
+      if (registryError && !isMissingRelationError(registryError, 'agent_registry')) {
+        console.warn('[Agent] Registry lookup for manifest failed:', registryError.message);
+      }
+
+      if (registryRow) {
+        const metadata = toPlainObject(registryRow.metadata);
+        registryProof = toPlainObject(metadata.onChainRegistration);
+        registryMetadata = {
+          version: registryRow.version,
+          metadataCid: registryRow.metadata_cid,
+          metadataUri: registryRow.metadata_uri,
+          updatedAt: registryRow.updated_at,
+        };
+      }
+    } catch (registryLookupError) {
+      console.warn('[Agent] Registry lookup for manifest failed:', registryLookupError.message);
+    }
+
     // Standard ERC-8004 Agent Manifest
     const manifest = {
       name: agent.name,
@@ -788,9 +1058,20 @@ async function getAgentManifest(req, res) {
       metadata: {
         avatarUrl: agent.avatar_url,
         createdAt: agent.created_at,
-        updatedAt: agent.updated_at
+        updatedAt: agent.updated_at,
+        registry: registryMetadata,
+        registrationProof: registryProof,
       }
     };
+
+    if (registryProof && registryProof.transactionHash) {
+      manifest.erc8004.registrationProof = {
+        transactionHash: registryProof.transactionHash,
+        transactionExplorerUrl: registryProof.transactionExplorerUrl || buildTransactionExplorerUrl(registryProof.transactionHash),
+        blockNumber: registryProof.blockNumber || null,
+        registeredAt: registryProof.registeredAt || null,
+      };
+    }
 
     return res.json(manifest);
 

@@ -2,7 +2,8 @@
  * Agent Routes
  * 
  * RESTful API for managing custom AI agents.
- * All routes require API key authentication (via apiKeyAuth middleware).
+ * Public read endpoints are exposed for ERC-8004 verification,
+ * while management routes require API key authentication.
  */
 
 const express = require('express');
@@ -36,6 +37,22 @@ const {
  */
 router.get('/:id/manifest', getAgentManifest);
 
+/**
+ * GET /agents/registry/discover
+ * Discover active agent registry entries.
+ *
+ * Query: { chain?, capability?, mineOnly?, userId?, limit? }
+ */
+router.get('/registry/discover', discoverAgentRegistry);
+
+/**
+ * GET /agents/:id/registry
+ * Read an agent registry record.
+ *
+ * Query: { userId? }
+ */
+router.get('/:id/registry', getAgentRegistry);
+
 // All agent management routes should be protected by the master API key
 router.use(apiKeyAuth());
 
@@ -57,28 +74,12 @@ router.post('/', createAgent);
 router.get('/', listAgents);
 
 /**
- * GET /agents/registry/discover
- * Discover active agent registry entries.
- *
- * Query: { chain?, capability?, mineOnly?, userId?, limit? }
- */
-router.get('/registry/discover', discoverAgentRegistry);
-
-/**
  * PUT /agents/:id/registry
  * Create/update an agent registry record.
  *
  * Body: { userId, displayName?, description?, capabilities?, supportedChains?, metadata?, status? }
  */
 router.put('/:id/registry', upsertAgentRegistry);
-
-/**
- * GET /agents/:id/registry
- * Read an agent registry record.
- *
- * Query: { userId? }
- */
-router.get('/:id/registry', getAgentRegistry);
 
 /**
  * GET /agents/:id/audit-logs

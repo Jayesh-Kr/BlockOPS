@@ -1,6 +1,6 @@
 const AGENT_LIST_SELECT = 'id, user_id, name, description, api_key, tools, status, system_prompt, enabled_tools, wallet_address, on_chain_id, api_key_prefix, is_public, created_at, updated_at';
 const AGENT_LIST_SELECT_LEGACY = AGENT_LIST_SELECT.replace('on_chain_id, ', '');
-const AGENT_REGISTRATION_SELECT = 'user_id, on_chain_id, name';
+const AGENT_REGISTRATION_SELECT = 'user_id, on_chain_id, name, description, enabled_tools, wallet_address, avatar_url, is_public';
 const AGENT_REGISTRATION_SELECT_LEGACY = AGENT_REGISTRATION_SELECT.replace('on_chain_id, ', '');
 const ON_CHAIN_ID_MIGRATION_MESSAGE = 'The agents table is missing the on_chain_id column. Run backend/database/migrations/003_complete_agents_schema.sql (or add the column manually) before using on-chain agent registration.';
 

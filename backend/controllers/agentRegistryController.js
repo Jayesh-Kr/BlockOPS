@@ -68,7 +68,7 @@ async function loadAgent(agentId) {
 
   const { data, error } = await supabase
     .from('agents')
-    .select('id, user_id, name, description, enabled_tools, wallet_address, avatar_url, status, is_public')
+    .select('id, user_id, name, description, enabled_tools, wallet_address, avatar_url, status, is_public, on_chain_id')
     .eq('id', agentId)
     .single();
 
@@ -97,6 +97,11 @@ function canReadRegistry(agent, userId) {
   }
 
   if (agent.is_public) {
+    return true;
+  }
+
+  // On-chain registered agents are publicly verifiable by design.
+  if (agent.on_chain_id) {
     return true;
   }
 
@@ -317,7 +322,40 @@ async function discoverAgentRegistry(req, res) {
       return res.status(500).json({ success: false, error: error.message });
     }
 
-    const registryEntries = (data || []).map(normalizeRegistryRow);
+    let visibleRows = data || [];
+    if (String(mineOnly).toLowerCase() !== 'true') {
+      const agentIds = Array.from(new Set(visibleRows.map((row) => row.agent_id).filter(Boolean)));
+
+      if (agentIds.length > 0) {
+        const { data: agents, error: agentLookupError } = await supabase
+          .from('agents')
+          .select('id, user_id, is_public, on_chain_id')
+          .in('id', agentIds);
+
+        if (agentLookupError) {
+          console.error('[AgentRegistry] Discover visibility lookup error:', agentLookupError);
+          return res.status(500).json({ success: false, error: agentLookupError.message });
+        }
+
+        const visibilityMap = new Map((agents || []).map((agent) => [agent.id, agent]));
+        visibleRows = visibleRows.filter((row) => {
+          const visibility = visibilityMap.get(row.agent_id);
+          if (!visibility) {
+            return false;
+          }
+
+          if (visibility.is_public || visibility.on_chain_id) {
+            return true;
+          }
+
+          return Boolean(userId) && visibility.user_id === userId;
+        });
+      } else {
+        visibleRows = [];
+      }
+    }
+
+    const registryEntries = visibleRows.map(normalizeRegistryRow);
     return res.json({
       success: true,
       count: registryEntries.length,
