@@ -11,6 +11,22 @@ const {
 
 const activeReminderTasks = new Map();
 
+function isSupabaseConnectivityError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  const details = String(error?.details || '').toLowerCase();
+  return message.includes('fetch failed') || message.includes('eacces')
+    || details.includes('fetch failed') || details.includes('eacces');
+}
+
+function listInMemoryReminderJobs() {
+  return Array.from(activeReminderTasks.keys()).map((id) => ({
+    id,
+    status: 'active',
+    liveStatus: 'running',
+    note: 'in-memory fallback'
+  }));
+}
+
 function isOneShot(expr) {
   return /^\d{4}-\d{2}-\d{2}/.test(String(expr || ''));
 }
@@ -504,7 +520,7 @@ async function createReminder(req, res) {
 async function listReminders(req, res) {
   try {
     if (!supabase) {
-      const jobs = Array.from(activeReminderTasks.keys()).map((id) => ({ id, status: 'active', liveStatus: 'running' }));
+      const jobs = listInMemoryReminderJobs();
       return res.json(successResponse({ jobs, total: jobs.length }));
     }
 
@@ -532,6 +548,17 @@ async function listReminders(req, res) {
     return res.json(successResponse({ jobs, total: jobs.length, includeInactive }));
   } catch (error) {
     console.error('[Reminder] listReminders error:', error);
+    if (isSupabaseConnectivityError(error)) {
+      const jobs = listInMemoryReminderJobs();
+      return res.json(successResponse({
+        jobs,
+        total: jobs.length,
+        includeInactive: true,
+        degraded: true,
+        warning: 'Supabase unreachable; returning in-memory reminders only.'
+      }));
+    }
+
     return res.status(500).json(errorResponse(error.message));
   }
 }

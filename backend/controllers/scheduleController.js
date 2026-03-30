@@ -34,6 +34,45 @@ const activeTasks = new Map();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function isSupabaseConnectivityError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  const details = String(error?.details || '').toLowerCase();
+  return message.includes('fetch failed') || message.includes('eacces')
+    || details.includes('fetch failed') || details.includes('eacces');
+}
+
+function listInMemoryScheduleJobs() {
+  const jobs = [];
+  activeTasks.forEach((_, id) => {
+    jobs.push({
+      id,
+      status: 'active',
+      liveStatus: 'running',
+      note: 'in-memory fallback'
+    });
+  });
+  return jobs;
+}
+
+async function purgeCompletedSuccessfulOneShotJobs() {
+  if (!supabase) return;
+
+  try {
+    const { error } = await supabase
+      .from('scheduled_transfers')
+      .delete()
+      .eq('type', 'one_shot')
+      .eq('status', 'completed')
+      .not('last_tx_hash', 'is', null);
+
+    if (error) {
+      console.warn(`[Schedule] Failed to purge completed one-shot jobs: ${error.message}`);
+    }
+  } catch (cleanupError) {
+    console.warn(`[Schedule] Failed to purge completed one-shot jobs: ${cleanupError.message}`);
+  }
+}
+
 function isOneShot(expr) {
   // If the expression looks like an ISO datetime, treat as one-shot
   return /^\d{4}-\d{2}-\d{2}/.test(expr);
@@ -240,16 +279,20 @@ async function runTransfer(job) {
 
     console.log(`[Schedule] Job ${id} executed successfully. Tx: ${txHash}`);
 
-    // Fire webhook
-    await fireEvent('tx.sent', job.agent_id || null, {
-      type:      'scheduled_transfer',
-      jobId:     id,
-      txHash,
-      from:      wallet.address,
-      to:        to_address,
-      amount,
-      token:     token_address || 'ETH'
-    }).catch(() => {});
+    // Fire webhook as best-effort, but never fail the transfer execution because of webhook issues.
+    try {
+      fireEvent(job.agent_id || null, 'tx.sent', {
+        type:      'scheduled_transfer',
+        jobId:     id,
+        txHash,
+        from:      wallet.address,
+        to:        to_address,
+        amount,
+        token:     token_address || 'ETH'
+      });
+    } catch (webhookError) {
+      console.warn(`[Schedule] Webhook dispatch failed for job ${id}: ${webhookError.message}`);
+    }
   } catch (err) {
     error = err.shortMessage || err.message;
     console.error(`[Schedule] Job ${id} failed:`, error);
@@ -294,6 +337,8 @@ async function runTransfer(job) {
       console.warn(`[Schedule] Failed to write execution log for job ${id}: ${persistError.message}`);
     }
   }
+
+  return { txHash, error };
 }
 
 /**
@@ -320,22 +365,40 @@ function registerTask(job) {
       return;
     }
     const timer = setTimeout(async () => {
-      await runTransfer(job);
-      // Mark as completed after running once
-      if (supabase) {
-        try {
-          const { error: completionError } = await supabase
-            .from('scheduled_transfers')
-            .update({ status: 'completed' })
-            .eq('id', job.id);
+      const result = await runTransfer(job);
 
-          if (completionError) {
-            console.warn(`[Schedule] Failed to mark one-shot job ${job.id} as completed: ${completionError.message}`);
+      if (supabase) {
+        if (!result?.error) {
+          // Delete successful one-shot jobs so they disappear from DB/UI after execution.
+          try {
+            const { error: deleteError } = await supabase
+              .from('scheduled_transfers')
+              .delete()
+              .eq('id', job.id);
+
+            if (deleteError) {
+              console.warn(`[Schedule] Failed to delete completed one-shot job ${job.id}: ${deleteError.message}`);
+            }
+          } catch (deletePersistError) {
+            console.warn(`[Schedule] Failed to delete completed one-shot job ${job.id}: ${deletePersistError.message}`);
           }
-        } catch (completionPersistError) {
-          console.warn(`[Schedule] Failed to mark one-shot job ${job.id} as completed: ${completionPersistError.message}`);
+        } else {
+          // Keep failed one-shot jobs for debugging, but mark them completed to avoid reloading as active.
+          try {
+            const { error: completionError } = await supabase
+              .from('scheduled_transfers')
+              .update({ status: 'completed' })
+              .eq('id', job.id);
+
+            if (completionError) {
+              console.warn(`[Schedule] Failed to mark failed one-shot job ${job.id} as completed: ${completionError.message}`);
+            }
+          } catch (completionPersistError) {
+            console.warn(`[Schedule] Failed to mark failed one-shot job ${job.id} as completed: ${completionPersistError.message}`);
+          }
         }
       }
+
       activeTasks.delete(job.id);
     }, delay);
     // Wrap timer in a task-like object so we can stop it
@@ -486,11 +549,11 @@ async function createSchedule(req, res) {
 async function listSchedules(req, res) {
   try {
     if (!supabase) {
-      // Return in-memory tasks
-      const tasks = [];
-      activeTasks.forEach((_, id) => tasks.push({ id, status: 'active', note: 'in-memory (no Supabase)' }));
-      return res.json(successResponse({ jobs: tasks, total: tasks.length }));
+      const jobs = listInMemoryScheduleJobs();
+      return res.json(successResponse({ jobs, total: jobs.length }));
     }
+
+    await purgeCompletedSuccessfulOneShotJobs();
 
     const scope = await resolveScheduleAccessScope(req);
     let query = supabase
@@ -511,8 +574,18 @@ async function listSchedules(req, res) {
 
     return res.json(successResponse({ jobs, total: jobs.length }));
   } catch (error) {
-    const statusCode = error.statusCode || 500;
     console.error('listSchedules error:', error);
+    if (isSupabaseConnectivityError(error)) {
+      const jobs = listInMemoryScheduleJobs();
+      return res.json(successResponse({
+        jobs,
+        total: jobs.length,
+        degraded: true,
+        warning: 'Supabase unreachable; returning in-memory schedules only.'
+      }));
+    }
+
+    const statusCode = error.statusCode || 500;
     return res.status(statusCode).json(errorResponse(error.message));
   }
 }
@@ -582,7 +655,7 @@ async function cancelSchedule(req, res) {
     if (supabase) {
       const { error } = await supabase
         .from('scheduled_transfers')
-        .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+        .delete()
         .eq('id', id);
       if (error) throw new Error(error.message);
     }
@@ -590,7 +663,7 @@ async function cancelSchedule(req, res) {
     return res.json(successResponse({
       id,
       status: 'cancelled',
-      message: 'Scheduled transfer cancelled.',
+      message: 'Scheduled transfer cancelled and removed.',
       walletAddress: jobRow?.wallet_address || null
     }));
   } catch (error) {
