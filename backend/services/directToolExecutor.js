@@ -54,6 +54,37 @@ function extractAddressFromText(text = '') {
   return match ? match[0] : null;
 }
 
+function isSelfWalletQuery(text = '') {
+  const normalized = String(text || '').toLowerCase();
+  if (!normalized) return false;
+
+  return (
+    /\bmy\b/.test(normalized) ||
+    /\bme\b/.test(normalized) ||
+    /\bmine\b/.test(normalized) ||
+    /\bmy wallet\b/.test(normalized) ||
+    /\bwhat is my balance\b/.test(normalized) ||
+    /\bcheck my balance\b/.test(normalized) ||
+    /\bwallet balance\b/.test(normalized) ||
+    /\bmy portfolio\b/.test(normalized)
+  );
+}
+
+function extractExplicitChainFromText(text = '') {
+  const normalized = String(text || '').toLowerCase();
+  if (!normalized) return null;
+
+  if (/\b(arbitrum sepolia|arb sepolia|arbitrum)\b/.test(normalized)) {
+    return 'arbitrum-sepolia';
+  }
+
+  if (/\b(flow evm testnet|flow testnet|flow evm|flow)\b/.test(normalized)) {
+    return 'flow-testnet';
+  }
+
+  return null;
+}
+
 function extractPrivateKeyFromText(text = '') {
   const match = text.match(/0x[a-fA-F0-9]{64}/);
   return match ? match[0] : null;
@@ -355,13 +386,20 @@ function generateEmailFromPreviousResults(previousResults = [], fallbackMessage 
 function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}) {
   const missing = [];
   let mapped = { ...params };
-  const chain = normalizeChainId(params.chain || executionContext.chain || DEFAULT_CHAIN);
+  const explicitChainInMessage = extractExplicitChainFromText(fallbackMessage);
+  const chain = normalizeChainId(explicitChainInMessage || executionContext.chain || params.chain || DEFAULT_CHAIN);
+  const explicitAddressInMessage = extractAddressFromText(fallbackMessage);
+  const requestWalletAddress = executionContext.walletAddress || executionContext.wallet_address || null;
+  const shouldPreferExecutionWallet =
+    Boolean(requestWalletAddress) &&
+    !explicitAddressInMessage &&
+    isSelfWalletQuery(fallbackMessage);
   const contextualAddress =
+    (shouldPreferExecutionWallet ? requestWalletAddress : null) ||
     params.wallet_address ||
     params.address ||
-    executionContext.walletAddress ||
-    executionContext.wallet_address ||
-    extractAddressFromText(fallbackMessage);
+    requestWalletAddress ||
+    explicitAddressInMessage;
   const contextualPrivateKey =
     params.privateKey ||
     params.private_key ||

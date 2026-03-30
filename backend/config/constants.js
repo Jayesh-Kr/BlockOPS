@@ -68,6 +68,7 @@ const CHAIN_ALIASES = {
   flow: 'flow-testnet',
   'flow-evm': 'flow-testnet',
   'flow-evm-testnet': 'flow-testnet',
+  'flow evm testnet': 'flow-testnet',
   'flow testnet': 'flow-testnet',
   '545': 'flow-testnet',
   flowtestnet: 'flow-testnet',

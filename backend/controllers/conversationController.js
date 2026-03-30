@@ -119,6 +119,41 @@ function getAuditWaitMs() {
   return Math.min(parsed, 60000);
 }
 
+function extractExplicitAddressFromMessage(message = '') {
+  const match = String(message).match(/0x[a-fA-F0-9]{40}/);
+  return match ? match[0] : null;
+}
+
+function extractExplicitChainFromMessage(message = '') {
+  const normalized = String(message || '').toLowerCase();
+  if (!normalized) return null;
+
+  if (/\b(arbitrum sepolia|arb sepolia|arbitrum)\b/.test(normalized)) {
+    return 'arbitrum-sepolia';
+  }
+
+  if (/\b(flow evm testnet|flow testnet|flow evm|flow)\b/.test(normalized)) {
+    return 'flow-testnet';
+  }
+
+  return null;
+}
+
+function isSelfWalletQuery(message = '') {
+  const normalized = String(message || '').toLowerCase();
+  if (!normalized) return false;
+
+  return (
+    /\bmy\b/.test(normalized) ||
+    /\bme\b/.test(normalized) ||
+    /\bmine\b/.test(normalized) ||
+    /\bmy wallet\b/.test(normalized) ||
+    /\bwhat is my balance\b/.test(normalized) ||
+    /\bcheck my balance\b/.test(normalized) ||
+    /\bwallet balance\b/.test(normalized)
+  );
+}
+
 function createPendingExecutionAudit(toolResults) {
   const toolCalls = Array.isArray(toolResults?.tool_calls) ? toolResults.tool_calls : [];
   const results = Array.isArray(toolResults?.results) ? toolResults.results : [];
@@ -187,7 +222,6 @@ async function chat(req, res) {
       chain
     } = req.body;
     const selectedChain = normalizeChainId(chain || DEFAULT_CHAIN);
-    const chainConfig = getChainConfig(selectedChain);
 
     // Validation
     if (!agentId || !userId || !message) {
@@ -206,6 +240,9 @@ async function chat(req, res) {
 
     // Truncate message if too long
     const truncatedMessage = truncateMessage(message);
+    const explicitChainInMessage = extractExplicitChainFromMessage(truncatedMessage);
+    const requestedChain = normalizeChainId(explicitChainInMessage || selectedChain);
+    const chainConfig = getChainConfig(requestedChain);
 
     // Get or create conversation (with Supabase if available, otherwise in-memory)
     let convId = conversationId;
@@ -336,12 +373,15 @@ async function chat(req, res) {
     console.log('[Chat] Analyzing message for tool requirements...');
     
     const routingPlan = await intelligentToolRouting(truncatedMessage, messages, {
-      chain: selectedChain,
+      chain: requestedChain,
       chainId: chainConfig.chainId,
       networkName: chainConfig.name
     });
 
     if (routingPlan.execution_plan?.steps?.length) {
+      const explicitAddressInMessage = extractExplicitAddressFromMessage(truncatedMessage);
+      const shouldPreferRequestWallet = Boolean(walletAddress) && !explicitAddressInMessage && isSelfWalletQuery(truncatedMessage);
+
       routingPlan.execution_plan.steps = routingPlan.execution_plan.steps.map((step) => {
         if (!step || !step.tool) return step;
 
@@ -349,8 +389,21 @@ async function chat(req, res) {
           ...(step.parameters || {})
         };
 
-        if (!nextParameters.chain) {
-          nextParameters.chain = selectedChain;
+        nextParameters.chain = requestedChain;
+
+        if (shouldPreferRequestWallet) {
+          if (step.tool === 'get_balance' || step.tool === 'get_portfolio') {
+            nextParameters.address = walletAddress;
+            nextParameters.wallet_address = walletAddress;
+          }
+
+          if (step.tool === 'schedule_reminder') {
+            const taskType = String(nextParameters.taskType || nextParameters.task_type || '').toLowerCase();
+            if (taskType === 'balance' || taskType === 'portfolio') {
+              nextParameters.walletAddress = walletAddress;
+              nextParameters.wallet_address = walletAddress;
+            }
+          }
         }
 
         return {
@@ -359,6 +412,9 @@ async function chat(req, res) {
         };
       });
     }
+
+    routingPlan.requested_chain = requestedChain;
+    routingPlan.requested_network = chainConfig.name;
 
     const TOOL_ALIASES = {
       tx_status: 'lookup_transaction',
@@ -410,15 +466,19 @@ async function chat(req, res) {
       isOffTopic: routingPlan.is_off_topic,
       requiresTools: routingPlan.requires_tools,
       complexity: routingPlan.complexity,
-      chain: selectedChain,
+      chain: requestedChain,
       executionType: routingPlan.execution_plan?.type,
       toolCount: routingPlan.execution_plan?.steps?.length || 0,
       blockedByToolPermissions
     });
 
-    const unsupportedStep = routingPlan.execution_plan?.steps?.find((step) => !isToolSupportedOnChain(step.tool, selectedChain));
+    const unsupportedStep = routingPlan.execution_plan?.steps?.find((step) => {
+      const stepChain = normalizeChainId(step?.parameters?.chain || requestedChain);
+      return !isToolSupportedOnChain(step.tool, stepChain);
+    });
     if (unsupportedStep) {
-      const unsupportedMessage = buildUnsupportedToolError(unsupportedStep.tool, selectedChain);
+      const unsupportedChain = normalizeChainId(unsupportedStep?.parameters?.chain || requestedChain);
+      const unsupportedMessage = buildUnsupportedToolError(unsupportedStep.tool, unsupportedChain);
 
       if (useSupabase) {
         await supabase
@@ -439,7 +499,7 @@ async function chat(req, res) {
         messageCount: useSupabase ? messages.length + 1 : getInMemoryMessages(convId).length,
         hasTools: false,
         unsupportedTool: unsupportedStep.tool,
-        chain: selectedChain
+        chain: unsupportedChain
       });
     }
 
@@ -627,7 +687,7 @@ async function chat(req, res) {
       
       try {
         const preferDirectExecution =
-          selectedChain !== 'arbitrum-sepolia' ||
+          requestedChain !== 'arbitrum-sepolia' ||
           (walletType === 'pkp' &&
             routingPlan.execution_plan?.steps?.some(step => step.tool === 'transfer')) ||
           routingPlan.execution_plan?.steps?.some(step =>
@@ -675,7 +735,7 @@ async function chat(req, res) {
             user_message: enhancedMessage,
             private_key: privateKey || null,
             wallet_address: walletAddress || null,
-            chain: selectedChain
+            chain: requestedChain
           })
         });
 
@@ -749,7 +809,7 @@ async function chat(req, res) {
               telegramChatId: telegramChatId || null,
               defaultEmailTo: defaultEmailTo || userEmail || null,
               userEmail: userEmail || null,
-              chain: selectedChain,
+              chain: requestedChain,
               apiKey: req.headers['x-api-key'] || process.env.MASTER_API_KEY || null
             }
           );

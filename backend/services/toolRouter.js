@@ -375,11 +375,11 @@ missing_info: [] (EMPTY — all data comes from tools)
 4. Extract parameters from BOTH the current message AND conversation history
 5. For ANY calculation involving prices/balances → add fetch_price + calculate steps
 6. Ethereum addresses are 42 chars starting with "0x"
-7. Default execution chain: ${routingContext.networkName || 'Flow EVM Testnet'} (Chain ID: ${routingContext.chainId || 545})
+7. Request execution chain: ${routingContext.networkName || 'Flow EVM Testnet'} (Chain ID: ${routingContext.chainId || 545}). Treat this as authoritative unless the current user message explicitly names another supported chain.
 8. When the user says "calculate" or "now calculate" after previous data was fetched, create a calculate step using the data from conversation context
 9. If the user says generic words like "this balance" or "my balance", look for the wallet address and balance in recent conversation messages
 10. NEVER put prices, balances, or token info in missing_info — those are fetchable by tools
-11. Include "chain": "${routingContext.chain || 'flow-testnet'}" in blockchain tool parameters unless the user explicitly requested another supported chain
+11. Include "chain": "${routingContext.chain || 'flow-testnet'}" in blockchain tool parameters unless the current user message explicitly requested another supported chain. Never silently switch back to Flow if routingContext.chain is provided.
 
 Respond ONLY with valid JSON, no other text.`;
 
