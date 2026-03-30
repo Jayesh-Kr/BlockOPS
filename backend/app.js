@@ -107,7 +107,7 @@ app.use('/batch',         ...authGuard, batchRoutes);
 app.use('/chain',         ...authGuard, chainRoutes);
 app.use('/swap',          ...authGuard, swapRoutes);
 app.use('/bridge',        ...authGuard, bridgeRoutes);
-app.use('/schedule',      ...authGuard, scheduleRoutes);
+app.use('/schedule',      txLimiter, scheduleRoutes);
 app.use('/agents',        txLimiter, agentRoutes);
 app.use('/reminders',     chatLimiter, apiKeyAuth({ optional: true }), reminderRoutes);
 

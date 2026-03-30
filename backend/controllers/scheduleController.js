@@ -18,6 +18,7 @@
  *   tokenAddress     — optional ERC20 address; omit for native ETH
  *   cronExpression   — standard 5-field cron (e.g. "0 9 * * 1" = every Monday 9am UTC)
  *                      OR ISO-8601 datetime string for a one-shot run
+ *                      OR relative phrase like "in 5 minutes" / "after 2 hours"
  *   label            — optional human-readable name for the job
  */
 
@@ -40,6 +41,168 @@ function isOneShot(expr) {
 
 function isValidCron(expr) {
   return cron.validate(expr);
+}
+
+function normalizeTimeUnit(unit) {
+  const normalized = String(unit || '').toLowerCase();
+  if (['second', 'seconds', 'sec', 'secs'].includes(normalized)) return 'second';
+  if (['minute', 'minutes', 'min', 'mins'].includes(normalized)) return 'minute';
+  if (['hour', 'hours', 'hr', 'hrs'].includes(normalized)) return 'hour';
+  if (['day', 'days'].includes(normalized)) return 'day';
+  return null;
+}
+
+function addIntervalToNow(amount, unit) {
+  const date = new Date();
+
+  if (unit === 'second') date.setSeconds(date.getSeconds() + amount);
+  if (unit === 'minute') date.setMinutes(date.getMinutes() + amount);
+  if (unit === 'hour') date.setHours(date.getHours() + amount);
+  if (unit === 'day') date.setDate(date.getDate() + amount);
+
+  return date.toISOString();
+}
+
+function normalizeScheduleExpression(expr) {
+  const raw = String(expr || '').trim();
+  if (!raw) return { expression: raw, source: 'raw' };
+
+  const relativeMatch = raw.match(/\b(?:in|after)\s+(\d+)\s*(second|seconds|sec|secs|minute|minutes|min|mins|hour|hours|hr|hrs|day|days)\b/i);
+  if (!relativeMatch) {
+    return { expression: raw, source: 'raw' };
+  }
+
+  const amount = parseInt(relativeMatch[1], 10);
+  const unit = normalizeTimeUnit(relativeMatch[2]);
+
+  if (!Number.isFinite(amount) || amount <= 0 || !unit) {
+    return { expression: raw, source: 'raw' };
+  }
+
+  return {
+    expression: addIntervalToNow(amount, unit),
+    source: 'relative',
+    original: raw,
+    amount,
+    unit
+  };
+}
+
+function normalizeIdentity(value) {
+  const normalized = String(value || '').trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeLower(value) {
+  return String(value || '').toLowerCase();
+}
+
+async function fetchUserWalletAddress(userId) {
+  if (!supabase || !userId) return null;
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('wallet_address')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to resolve wallet address for user ${userId}: ${error.message}`);
+  }
+
+  return data?.wallet_address || null;
+}
+
+async function userOwnsAgent(userId, agentId) {
+  if (!supabase || !userId || !agentId) return false;
+
+  const { data, error } = await supabase
+    .from('agents')
+    .select('id')
+    .eq('id', agentId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to validate agent ownership: ${error.message}`);
+  }
+
+  return Boolean(data?.id);
+}
+
+async function resolveScheduleAccessScope(req) {
+  const keyRole = req.apiKey?.role || null;
+  const keyAgentId = normalizeIdentity(req.apiKey?.agentId);
+  const requestedUserId = normalizeIdentity(req.query?.userId || req.body?.userId);
+  const requestedAgentId = normalizeIdentity(req.query?.agentId || req.body?.agentId);
+
+  if (keyAgentId) {
+    const userWalletAddress = requestedUserId ? await fetchUserWalletAddress(requestedUserId) : null;
+    return { agentId: keyAgentId, userWalletAddress };
+  }
+
+  if (requestedUserId && requestedAgentId) {
+    const ownsAgent = await userOwnsAgent(requestedUserId, requestedAgentId);
+    if (!ownsAgent) {
+      const error = new Error('Access denied for requested agent scope.');
+      error.statusCode = 403;
+      throw error;
+    }
+
+    const userWalletAddress = await fetchUserWalletAddress(requestedUserId);
+    return { agentId: requestedAgentId, userWalletAddress };
+  }
+
+  if (requestedUserId) {
+    const userWalletAddress = await fetchUserWalletAddress(requestedUserId);
+    if (!userWalletAddress) {
+      const error = new Error('Could not determine schedule scope from userId. Link a wallet or pass a valid agentId.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    return { agentId: null, userWalletAddress };
+  }
+
+  if (keyRole === 'master' && requestedAgentId) {
+    return { agentId: requestedAgentId, userWalletAddress: null };
+  }
+
+  const error = new Error('Missing access scope. Provide userId (and optional agentId), or use an agent API key.');
+  error.statusCode = 400;
+  throw error;
+}
+
+function applyScheduleScope(query, scope) {
+  const { agentId, userWalletAddress } = scope;
+
+  if (agentId && userWalletAddress) {
+    return query.or(`agent_id.eq.${agentId},wallet_address.eq.${userWalletAddress}`);
+  }
+
+  if (agentId) {
+    return query.eq('agent_id', agentId);
+  }
+
+  if (userWalletAddress) {
+    return query.eq('wallet_address', userWalletAddress);
+  }
+
+  return query;
+}
+
+function isJobInScope(job, scope) {
+  const matchesAgent = Boolean(scope.agentId) && String(job?.agent_id || '') === String(scope.agentId);
+  const matchesWallet = Boolean(scope.userWalletAddress)
+    && normalizeLower(job?.wallet_address) === normalizeLower(scope.userWalletAddress);
+
+  if (scope.agentId && scope.userWalletAddress) {
+    return matchesAgent || matchesWallet;
+  }
+
+  if (scope.agentId) return matchesAgent;
+  if (scope.userWalletAddress) return matchesWallet;
+  return false;
 }
 
 /**
@@ -133,6 +296,10 @@ function registerTask(job) {
   if (isOneShot(job.cron_expression)) {
     // One-shot: use setTimeout until the target datetime
     const target = new Date(job.cron_expression).getTime();
+    if (!Number.isFinite(target)) {
+      console.warn(`[Schedule] One-shot job ${job.id} has an invalid datetime — skipping.`);
+      return;
+    }
     const delay  = target - Date.now();
     if (delay <= 0) {
       console.warn(`[Schedule] One-shot job ${job.id} target is in the past — skipping.`);
@@ -207,14 +374,33 @@ async function createSchedule(req, res) {
       return res.status(400).json(errorResponse('Invalid toAddress'));
     }
 
-    const oneShot = isOneShot(cronExpression);
-    if (!oneShot && !isValidCron(cronExpression)) {
+    const normalizedSchedule = normalizeScheduleExpression(cronExpression);
+    const normalizedCronExpression = normalizedSchedule.expression;
+    const oneShot = isOneShot(normalizedCronExpression);
+
+    if (!oneShot && !isValidCron(normalizedCronExpression)) {
       return res.status(400).json(errorResponse(
-        `Invalid cronExpression "${cronExpression}". Use a 5-field cron string (e.g. "0 9 * * 1") or an ISO datetime string.`
+        `Invalid cronExpression "${cronExpression}". Use a 5-field cron string (e.g. "0 9 * * 1"), an ISO datetime string, or a relative expression like "in 5 minutes".`
       ));
     }
 
-    const agentId = req.apiKey?.agentId || null;
+    if (oneShot && Number.isNaN(new Date(normalizedCronExpression).getTime())) {
+      return res.status(400).json(errorResponse('Invalid one-shot datetime. Use a valid ISO datetime string or relative expression like "in 5 minutes".'));
+    }
+
+    const requestedAgentId = normalizeIdentity(req.body?.agentId);
+    const requestedUserId = normalizeIdentity(req.body?.userId);
+    let agentId = req.apiKey?.agentId || null;
+
+    if (!agentId && req.apiKey?.role === 'master' && requestedAgentId) {
+      if (requestedUserId) {
+        const ownsAgent = await userOwnsAgent(requestedUserId, requestedAgentId);
+        if (!ownsAgent) {
+          return res.status(403).json(errorResponse('Access denied for requested agent scope.'));
+        }
+      }
+      agentId = requestedAgentId;
+    }
 
     // Validate address
     const provider = getProvider();
@@ -226,7 +412,7 @@ async function createSchedule(req, res) {
       to_address:      toAddress,
       amount:          String(amount),
       token_address:   tokenAddress || null,
-      cron_expression: cronExpression,
+      cron_expression: normalizedCronExpression,
       label:           label || null,
       type:            oneShot ? 'one_shot' : 'recurring',
       status:          'active',
@@ -258,15 +444,16 @@ async function createSchedule(req, res) {
       id:              jobId,
       label:           label || null,
       type:            oneShot ? 'one_shot' : 'recurring',
-      cronExpression,
+      cronExpression:  normalizedCronExpression,
+      requestedCronExpression: cronExpression,
       toAddress,
       amount:          `${amount} ${tokenAddress ? '(ERC20)' : 'ETH'}`,
       tokenAddress:    tokenAddress || null,
       walletAddress:   wallet.address,
       status:          'active',
       note:            oneShot
-        ? `Will run once at ${new Date(cronExpression).toISOString()}`
-        : `Will run on schedule: "${cronExpression}" (UTC)`
+        ? `Will run once at ${new Date(normalizedCronExpression).toISOString()}${normalizedSchedule.source === 'relative' ? ` (parsed from "${cronExpression}")` : ''}`
+        : `Will run on schedule: "${normalizedCronExpression}" (UTC)`
     }));
   } catch (error) {
     console.error('createSchedule error:', error);
@@ -284,13 +471,13 @@ async function listSchedules(req, res) {
       return res.json(successResponse({ jobs: tasks, total: tasks.length }));
     }
 
-    const agentId = req.apiKey?.agentId || null;
+    const scope = await resolveScheduleAccessScope(req);
     let query = supabase
       .from('scheduled_transfers')
       .select('id, label, type, cron_expression, to_address, amount, token_address, wallet_address, status, run_count, last_run_at, last_tx_hash, last_error, created_at')
       .order('created_at', { ascending: false });
 
-    if (agentId) query = query.eq('agent_id', agentId);
+    query = applyScheduleScope(query, scope);
 
     const { data, error } = await query;
     if (error) throw new Error(error.message);
@@ -303,8 +490,9 @@ async function listSchedules(req, res) {
 
     return res.json(successResponse({ jobs, total: jobs.length }));
   } catch (error) {
+    const statusCode = error.statusCode || 500;
     console.error('listSchedules error:', error);
-    return res.status(500).json(errorResponse(error.message));
+    return res.status(statusCode).json(errorResponse(error.message));
   }
 }
 
@@ -314,6 +502,8 @@ async function getSchedule(req, res) {
     const { id } = req.params;
     if (!supabase) return res.status(503).json(errorResponse('Supabase not configured'));
 
+    const scope = await resolveScheduleAccessScope(req);
+
     const { data, error } = await supabase
       .from('scheduled_transfers')
       .select('*, scheduled_transfer_logs(ran_at, tx_hash, error, success) ORDER BY scheduled_transfer_logs.ran_at DESC LIMIT 10')
@@ -321,6 +511,9 @@ async function getSchedule(req, res) {
       .single();
 
     if (error || !data) return res.status(404).json(errorResponse('Job not found'));
+    if (!isJobInScope(data, scope)) {
+      return res.status(403).json(errorResponse('Access denied for this schedule job.'));
+    }
 
     return res.json(successResponse({
       ...data,
@@ -328,7 +521,8 @@ async function getSchedule(req, res) {
       liveStatus: activeTasks.has(id) ? 'running' : data.status
     }));
   } catch (error) {
-    return res.status(500).json(errorResponse(error.message));
+    const statusCode = error.statusCode || 500;
+    return res.status(statusCode).json(errorResponse(error.message));
   }
 }
 
@@ -336,6 +530,27 @@ async function getSchedule(req, res) {
 async function cancelSchedule(req, res) {
   try {
     const { id } = req.params;
+
+    let jobRow = null;
+    if (supabase) {
+      const scope = await resolveScheduleAccessScope(req);
+
+      const { data, error } = await supabase
+        .from('scheduled_transfers')
+        .select('id, agent_id, wallet_address, status')
+        .eq('id', id)
+        .single();
+
+      if (error || !data) {
+        return res.status(404).json(errorResponse('Job not found'));
+      }
+
+      if (!isJobInScope(data, scope)) {
+        return res.status(403).json(errorResponse('Access denied for this schedule job.'));
+      }
+
+      jobRow = data;
+    }
 
     // Stop in-memory task
     if (activeTasks.has(id)) {
@@ -351,9 +566,15 @@ async function cancelSchedule(req, res) {
       if (error) throw new Error(error.message);
     }
 
-    return res.json(successResponse({ id, status: 'cancelled', message: 'Scheduled transfer cancelled.' }));
+    return res.json(successResponse({
+      id,
+      status: 'cancelled',
+      message: 'Scheduled transfer cancelled.',
+      walletAddress: jobRow?.wallet_address || null
+    }));
   } catch (error) {
-    return res.status(500).json(errorResponse(error.message));
+    const statusCode = error.statusCode || 500;
+    return res.status(statusCode).json(errorResponse(error.message));
   }
 }
 

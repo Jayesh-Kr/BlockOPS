@@ -159,6 +159,38 @@ export interface CancelReminderResponse {
   message?: string
 }
 
+export interface ScheduledTransferJob {
+  id: string
+  agent_id?: string | null
+  wallet_address?: string | null
+  to_address?: string | null
+  amount?: string | null
+  token_address?: string | null
+  cron_expression?: string | null
+  label?: string | null
+  type?: 'one_shot' | 'recurring' | string
+  status?: string
+  run_count?: number
+  last_run_at?: string | null
+  last_tx_hash?: string | null
+  last_error?: string | null
+  created_at?: string
+  liveStatus?: string
+}
+
+export interface ListScheduledTransfersResponse {
+  success: boolean
+  jobs: ScheduledTransferJob[]
+  total: number
+}
+
+export interface CancelScheduledTransferResponse {
+  success: boolean
+  id?: string
+  status?: string
+  message?: string
+}
+
 /**
  * Send a chat message with conversation memory
  * Uses the Node.js backend (port 3000) with Supabase
@@ -261,6 +293,57 @@ export async function cancelReminderJob(params: {
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ error: 'Failed to cancel reminder' }))
+    throw new Error(payload.error || `Request failed with status ${response.status}`)
+  }
+
+  return response.json()
+}
+
+/**
+ * List scheduled transfer jobs scoped to the current user/agent
+ */
+export async function listScheduledTransfersForUser(params: {
+  userId: string
+  agentId?: string
+}): Promise<ListScheduledTransfersResponse> {
+  const searchParams = new URLSearchParams()
+  searchParams.set('userId', params.userId)
+  if (params.agentId) {
+    searchParams.set('agentId', params.agentId)
+  }
+
+  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/schedule?${searchParams.toString()}`)
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ error: 'Failed to list scheduled transfers' }))
+    throw new Error(payload.error || `Request failed with status ${response.status}`)
+  }
+
+  return response.json()
+}
+
+/**
+ * Cancel scheduled transfer job by id
+ */
+export async function cancelScheduledTransferJob(params: {
+  id: string
+  userId?: string
+  agentId?: string
+}): Promise<CancelScheduledTransferResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.userId) {
+    searchParams.set('userId', params.userId)
+  }
+  if (params.agentId) {
+    searchParams.set('agentId', params.agentId)
+  }
+
+  const suffix = searchParams.toString() ? `?${searchParams.toString()}` : ''
+  const response = await fetch(`${BLOCKCHAIN_BACKEND_URL}/schedule/${params.id}${suffix}`, {
+    method: 'DELETE',
+  })
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ error: 'Failed to cancel scheduled transfer' }))
     throw new Error(payload.error || `Request failed with status ${response.status}`)
   }
 

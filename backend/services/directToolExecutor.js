@@ -658,7 +658,9 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       const cronExpression  = params.cronExpression || params.cron || params.cron_expression || params.schedule;
       const tokenAddress    = params.tokenAddress || params.token_address || params.token;
       const label           = params.label;
-      mapped = { privateKey, toAddress, amount, cronExpression };
+      const agentId         = params.agentId || executionContext.agentId || null;
+      const userId          = params.userId || executionContext.userId || null;
+      mapped = { privateKey, toAddress, amount, cronExpression, agentId, userId };
       if (tokenAddress) mapped.tokenAddress = tokenAddress;
       if (label)        mapped.label        = label;
       if (!privateKey)     missing.push('privateKey');
@@ -737,13 +739,19 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       break;
     }
     case 'list_schedules': {
-      mapped = {}; // no required params
+      const userId = params.userId || executionContext.userId || null;
+      const agentId = params.agentId || executionContext.agentId || null;
+      mapped = { userId, agentId };
+      if (!userId && !agentId) missing.push('userId');
       break;
     }
     case 'cancel_schedule': {
       const id = params.id || params.jobId || params.job_id;
-      mapped = { id };
+      const userId = params.userId || executionContext.userId || null;
+      const agentId = params.agentId || executionContext.agentId || null;
+      mapped = { id, userId, agentId };
       if (!id) missing.push('id');
+      if (!userId && !agentId) missing.push('userId');
       break;
     }
     default:
@@ -1170,8 +1178,10 @@ async function executeToolStep(step, fallbackMessage, executionContext = {}) {
         timeout: 30000
       });
     } else if (config.method === 'DELETE') {
+      const hasQueryParams = Object.keys(requestParams).length > 0;
       response = await axios.delete(url, {
         headers: Object.keys(headers).length ? headers : undefined,
+        params: hasQueryParams ? requestParams : undefined,
         timeout: 30000
       });
     } else {

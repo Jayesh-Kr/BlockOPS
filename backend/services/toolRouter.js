@@ -163,9 +163,9 @@ const AVAILABLE_TOOLS = {
   },
   schedule_transfer: {
     name: 'schedule_transfer',
-    description: 'Schedule a one-time or recurring on-chain ETH or ERC20 transfer using a cron expression or ISO datetime string.',
-    parameters: ['privateKey', 'toAddress', 'amount', 'cronExpression (cron string or ISO datetime)', 'tokenAddress (optional)', 'label (optional)'],
-    examples: ['Schedule a transfer of 0.01 ETH every day at 9am', 'Send 100 USDC to 0x... every Monday', 'Schedule a one-time transfer at 2026-03-10T12:00:00Z']
+    description: 'Schedule a one-time or recurring on-chain ETH or ERC20 transfer using a cron expression, ISO datetime string, or relative timer phrase (for example, "in 5 minutes").',
+    parameters: ['privateKey', 'toAddress', 'amount', 'cronExpression (cron string, ISO datetime, or relative timer phrase like "in 5 minutes")', 'tokenAddress (optional)', 'label (optional)'],
+    examples: ['Schedule a transfer of 0.01 ETH every day at 9am', 'Send 100 USDC to 0x... every Monday', 'Schedule a one-time transfer at 2026-03-10T12:00:00Z', 'Send 0.001 ETH to 0x... in 5 minutes']
   },
   schedule_reminder: {
     name: 'schedule_reminder',

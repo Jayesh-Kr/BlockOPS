@@ -23,11 +23,14 @@ import {
   type AgentAuditLogContent,
 } from "@/lib/agents"
 import {
+  cancelScheduledTransferJob,
   cancelReminderJob,
   getConversationMessages,
   listRemindersForUser,
+  listScheduledTransfersForUser,
   sendChatWithMemory,
   type ReminderJob,
+  type ScheduledTransferJob,
 } from "@/lib/backend"
 import type { Agent } from "@/lib/supabase"
 import { useWallets } from "@privy-io/react-auth"
@@ -733,6 +736,42 @@ function isReminderCancellable(job: ReminderJob): boolean {
   return status === "active" || liveStatus === "running" || liveStatus === "pending_reload"
 }
 
+function getTransferDisplayStatus(job: ScheduledTransferJob): string {
+  return String(job.liveStatus || job.status || "unknown")
+}
+
+function getTransferStatusClass(job: ScheduledTransferJob): string {
+  const status = getTransferDisplayStatus(job).toLowerCase()
+  if (status === "running" || status === "active") {
+    return "border-emerald-500/40 bg-emerald-500/10 text-emerald-600"
+  }
+  if (status === "pending_reload") {
+    return "border-amber-500/40 bg-amber-500/10 text-amber-600"
+  }
+  if (status === "cancelled" || status === "completed") {
+    return "border-slate-500/40 bg-slate-500/10 text-slate-600"
+  }
+  return "border-border bg-muted/40 text-muted-foreground"
+}
+
+function isTransferCancellable(job: ScheduledTransferJob): boolean {
+  const status = String(job.status || "").toLowerCase()
+  const liveStatus = String(job.liveStatus || "").toLowerCase()
+  return status === "active" || liveStatus === "running" || liveStatus === "pending_reload"
+}
+
+function getTransferTargetLabel(job: ScheduledTransferJob): string {
+  return job.to_address ? `To: ${job.to_address}` : "To: N/A"
+}
+
+function formatTransferAmount(job: ScheduledTransferJob): string {
+  if (!job.amount) {
+    return "N/A"
+  }
+
+  return job.token_address ? `${job.amount} (ERC20)` : `${job.amount} ETH`
+}
+
 function ReminderJobsSheet({
   open,
   onOpenChange,
@@ -747,11 +786,13 @@ function ReminderJobsSheet({
   conversationId?: string
 }) {
   const [jobs, setJobs] = useState<ReminderJob[]>([])
+  const [transferJobs, setTransferJobs] = useState<ScheduledTransferJob[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [scopeFilter, setScopeFilter] = useState<ReminderScopeFilter>("all")
   const [cancelingId, setCancelingId] = useState<string | null>(null)
+  const [cancelingTransferId, setCancelingTransferId] = useState<string | null>(null)
 
   const noConversationSelected = scopeFilter === "conversation" && !conversationId
 
@@ -763,6 +804,7 @@ function ReminderJobsSheet({
 
       if (noConversationSelected) {
         setJobs([])
+        setTransferJobs([])
         setTotalCount(0)
         setError(null)
         if (!silent) {
@@ -777,13 +819,52 @@ function ReminderJobsSheet({
       setError(null)
 
       try {
-        const response = await listRemindersForUser({
-          userId,
-          agentId,
-        })
+        const [remindersResult, transfersResult] = await Promise.allSettled([
+          listRemindersForUser({
+            userId,
+            agentId,
+          }),
+          listScheduledTransfersForUser({
+            userId,
+            agentId,
+          }),
+        ])
 
-        setJobs(response.jobs || [])
-        setTotalCount(response.total || 0)
+        const partialErrors: string[] = []
+        let reminderJobs: ReminderJob[] = []
+        let reminderTotal = 0
+        let scheduledJobs: ScheduledTransferJob[] = []
+        let scheduledTotal = 0
+
+        if (remindersResult.status === "fulfilled") {
+          reminderJobs = remindersResult.value.jobs || []
+          reminderTotal = remindersResult.value.total || 0
+        } else {
+          partialErrors.push(
+            remindersResult.reason instanceof Error
+              ? remindersResult.reason.message
+              : "Failed to load reminders"
+          )
+        }
+
+        if (transfersResult.status === "fulfilled") {
+          scheduledJobs = transfersResult.value.jobs || []
+          scheduledTotal = transfersResult.value.total || 0
+        } else {
+          partialErrors.push(
+            transfersResult.reason instanceof Error
+              ? transfersResult.reason.message
+              : "Failed to load scheduled transfers"
+          )
+        }
+
+        setJobs(reminderJobs)
+        setTransferJobs(scheduledJobs)
+        setTotalCount(reminderTotal + scheduledTotal)
+
+        if (partialErrors.length > 0) {
+          setError(partialErrors.join(" | "))
+        }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Failed to load reminders"
         setError(message)
@@ -828,9 +909,14 @@ function ReminderJobsSheet({
     return jobs.filter((job) => job.conversation_id === conversationId)
   }, [conversationId, jobs, scopeFilter])
 
+  const filteredTransferJobs = React.useMemo(() => transferJobs, [transferJobs])
+
   const activeCount = React.useMemo(
-    () => filteredJobs.filter((job) => isReminderCancellable(job)).length,
-    [filteredJobs]
+    () => (
+      filteredJobs.filter((job) => isReminderCancellable(job)).length
+      + filteredTransferJobs.filter((job) => isTransferCancellable(job)).length
+    ),
+    [filteredJobs, filteredTransferJobs]
   )
 
   const handleCancelReminder = async (job: ReminderJob) => {
@@ -875,6 +961,40 @@ function ReminderJobsSheet({
     }
   }
 
+  const handleCancelTransfer = async (job: ScheduledTransferJob) => {
+    if (!job.id || !userId || cancelingTransferId) {
+      return
+    }
+
+    setCancelingTransferId(job.id)
+
+    try {
+      await cancelScheduledTransferJob({
+        id: job.id,
+        userId,
+        agentId,
+      })
+
+      setTransferJobs((prev) => prev.filter((item) => item.id !== job.id))
+
+      toast({
+        title: "Scheduled transfer cancelled",
+        description: `Scheduled transfer ${job.id} was cancelled.`,
+      })
+
+      await fetchJobs(true)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to cancel scheduled transfer"
+      toast({
+        title: "Cancel failed",
+        description: message,
+        variant: "destructive",
+      })
+    } finally {
+      setCancelingTransferId(null)
+    }
+  }
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full min-h-0 gap-0 p-0 sm:max-w-xl">
@@ -883,10 +1003,10 @@ function ReminderJobsSheet({
             <div>
               <SheetTitle className="flex items-center gap-2 text-base">
                 <BellRing className="h-4 w-4" />
-                Reminder Jobs
+                Scheduled Jobs
               </SheetTitle>
               <SheetDescription>
-                Monitor active timers/cron reminders and cancel them directly.
+                Monitor active reminder and transfer schedules, including one-shot timers.
               </SheetDescription>
             </div>
             <Button
@@ -930,7 +1050,7 @@ function ReminderJobsSheet({
             </div>
 
             <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-              <span>Rows loaded: {filteredJobs.length}</span>
+              <span>Rows loaded: {filteredJobs.length + filteredTransferJobs.length}</span>
               <span>Total matching query: {totalCount}</span>
               <Badge variant="outline" className="h-5 border-emerald-500/40 bg-emerald-500/10 text-emerald-600">
                 {activeCount} active
@@ -940,10 +1060,10 @@ function ReminderJobsSheet({
         </SheetHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 space-y-3">
-          {isLoading && filteredJobs.length === 0 && (
+          {isLoading && filteredJobs.length === 0 && filteredTransferJobs.length === 0 && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Loading reminders...
+              Loading scheduled jobs...
             </div>
           )}
 
@@ -953,12 +1073,16 @@ function ReminderJobsSheet({
             </div>
           )}
 
-          {!isLoading && !error && filteredJobs.length === 0 && (
+          {!isLoading && !error && filteredJobs.length === 0 && filteredTransferJobs.length === 0 && (
             <div className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
               {noConversationSelected
                 ? "No conversation selected yet. Send one message and try again."
-                : "No reminder jobs found for the selected scope."}
+                : "No scheduled reminder or transfer jobs found for the selected scope."}
             </div>
+          )}
+
+          {filteredJobs.length > 0 && (
+            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Reminder jobs</p>
           )}
 
           {filteredJobs.map((job) => {
@@ -1022,6 +1146,88 @@ function ReminderJobsSheet({
                   <div className="rounded-md border border-border bg-muted/20 p-2">
                     <p className="uppercase tracking-wider text-[10px] text-muted-foreground">Last Run</p>
                     <p className="mt-1">{formatReminderTimestamp(job.last_run_at)}</p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                  <span>Runs: {job.run_count ?? 0}</span>
+                  {job.label && <span>Label: {job.label}</span>}
+                </div>
+
+                {job.last_error && (
+                  <div className="rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-xs text-red-600">
+                    Last error: {job.last_error}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+
+          {filteredTransferJobs.length > 0 && (
+            <p className="pt-1 text-[11px] uppercase tracking-wider text-muted-foreground">Transfer schedules</p>
+          )}
+
+          {filteredTransferJobs.map((job) => {
+            const cancellable = isTransferCancellable(job)
+            const isCanceling = cancelingTransferId === job.id
+            const displayStatus = getTransferDisplayStatus(job)
+
+            return (
+              <div key={job.id} className="rounded-md border border-border bg-background px-3 py-3 space-y-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Badge variant="outline" className="h-5 text-[10px] font-mono px-1.5">
+                        transfer
+                      </Badge>
+                      <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                        {job.type || "recurring"}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className={cn("h-5 px-1.5 text-[10px]", getTransferStatusClass(job))}
+                      >
+                        {displayStatus}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground break-all">{job.id}</p>
+                  </div>
+
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="destructive"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={() => void handleCancelTransfer(job)}
+                    disabled={!cancellable || isCanceling || !userId}
+                  >
+                    {isCanceling ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <>
+                        <X className="mr-1 h-3.5 w-3.5" />
+                        Cancel
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                  <div className="rounded-md border border-border bg-muted/20 p-2">
+                    <p className="uppercase tracking-wider text-[10px] text-muted-foreground">Schedule</p>
+                    <p className="mt-1 wrap-break-word">{formatReminderSchedule(job.cron_expression, job.type)}</p>
+                  </div>
+                  <div className="rounded-md border border-border bg-muted/20 p-2">
+                    <p className="uppercase tracking-wider text-[10px] text-muted-foreground">Target</p>
+                    <p className="mt-1 break-all">{getTransferTargetLabel(job)}</p>
+                  </div>
+                  <div className="rounded-md border border-border bg-muted/20 p-2">
+                    <p className="uppercase tracking-wider text-[10px] text-muted-foreground">Amount</p>
+                    <p className="mt-1 break-all">{formatTransferAmount(job)}</p>
+                  </div>
+                  <div className="rounded-md border border-border bg-muted/20 p-2">
+                    <p className="uppercase tracking-wider text-[10px] text-muted-foreground">Created</p>
+                    <p className="mt-1">{formatReminderTimestamp(job.created_at)}</p>
                   </div>
                 </div>
 
@@ -1415,7 +1621,7 @@ export default function AgentChatPage() {
                 disabled={!dbUser?.id}
               >
                 <Clock3 className="h-3.5 w-3.5" />
-                Reminders
+                Schedules
               </Button>
               <Button
                 type="button"
