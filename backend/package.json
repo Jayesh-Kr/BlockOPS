@@ -18,8 +18,16 @@
   ],
   "author": "",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
+    "@filoz/synapse-core": "^0.3.1",
+    "@filoz/synapse-sdk": "^0.40.0",
     "@google/generative-ai": "^0.21.0",
+    "@lit-protocol/auth": "^8.2.3",
+    "@lit-protocol/lit-client": "^8.3.1",
+    "@lit-protocol/networks": "^8.4.1",
     "@supabase/supabase-js": "^2.95.3",
     "axios": "^1.6.0",
     "bcrypt": "^6.0.0",
@@ -31,7 +39,8 @@
     "groq-sdk": "^0.37.0",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.1",
-    "openai": "^4.20.0"
+    "openai": "^4.20.0",
+    "viem": "^2.47.6"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

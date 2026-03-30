@@ -25,6 +25,8 @@ const swapRoutes      = require('./routes/swapRoutes');
 const bridgeRoutes    = require('./routes/bridgeRoutes');
 const scheduleRoutes  = require('./routes/scheduleRoutes');
 const { reloadJobsFromDB } = require('./controllers/scheduleController');
+const reminderRoutes  = require('./routes/reminderRoutes');
+const { reloadReminderJobsFromDB } = require('./controllers/reminderController');
 const telegramRoutes  = require('./routes/telegramRoutes');
 const agentRoutes     = require('./routes/agentRoutes');
 const { prepareTransfer } = require('./controllers/transferController');
@@ -100,8 +102,9 @@ app.use('/batch',         ...authGuard, batchRoutes);
 app.use('/chain',         ...authGuard, chainRoutes);
 app.use('/swap',          ...authGuard, swapRoutes);
 app.use('/bridge',        ...authGuard, bridgeRoutes);
-app.use('/schedule',      ...authGuard, scheduleRoutes);
+app.use('/schedule',      txLimiter, scheduleRoutes);
 app.use('/agents',        txLimiter, agentRoutes);
+app.use('/reminders',     chatLimiter, apiKeyAuth({ optional: true }), reminderRoutes);
 
 // Telegram: /webhook is public (called by Telegram, no key needed)
 // All other /telegram/* routes require authGuard
@@ -140,6 +143,7 @@ app.use((error, req, res, next) => {
 const server = app.listen(PORT, async () => {
   // Reload scheduled jobs from DB on startup
   await reloadJobsFromDB();
+  await reloadReminderJobsFromDB();
 
   // Start Telegram bot (long-poll in dev, no-op if WEBHOOK_URL or no token)
   startLongPolling();

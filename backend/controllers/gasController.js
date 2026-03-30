@@ -9,6 +9,7 @@
 const { ethers } = require('ethers');
 const { getProvider } = require('../utils/blockchain');
 const { successResponse, errorResponse } = require('../utils/helpers');
+const { getChainFromRequest, getChainMetadata, isArbitrumChain } = require('../utils/chains');
 
 // Arbitrum Sepolia is a rollup — priority fees are near 0 but we still model tiers
 const PRIORITY_MULTIPLIERS = { slow: 1n, normal: 2n, fast: 5n };  // in gwei units
@@ -16,7 +17,9 @@ const PRIORITY_MULTIPLIERS = { slow: 1n, normal: 2n, fast: 5n };  // in gwei uni
 // ── GET /gas/estimate ─────────────────────────────────────────────────────────
 async function estimateGas(req, res) {
   try {
-    const provider = getProvider();
+    const chain = getChainFromRequest(req);
+    const chainMetadata = getChainMetadata(chain);
+    const provider = getProvider(chain);
     const feeData = await provider.getFeeData();
     const block = await provider.getBlock('latest');
 
@@ -47,7 +50,6 @@ async function estimateGas(req, res) {
     const priorityBase = parseFloat(ethers.formatUnits(feeData.maxPriorityFeePerGas ?? 10000000n, 'gwei'));
 
     return res.json(successResponse({
-      network: 'Arbitrum Sepolia',
       blockNumber: block?.number,
       baseFee: `${baseFeeGwei.toFixed(6)} gwei`,
       baseFeeWei: baseFeeWei.toString(),
@@ -56,7 +58,10 @@ async function estimateGas(req, res) {
         normal: buildTier(Math.max(priorityBase, 0.001)),
         fast: buildTier(Math.max(priorityBase * 2.5, 0.01))
       },
-      note: 'Arbitrum Sepolia is an L2 rollup — gas costs are much lower than Ethereum mainnet'
+      note: isArbitrumChain(chain)
+        ? 'Arbitrum Sepolia is an L2 rollup and keeps gas costs low.'
+        : 'Flow EVM Testnet fee data is shown from the selected RPC endpoint.',
+      ...chainMetadata
     }));
   } catch (error) {
     console.error('estimateGas error:', error);
@@ -76,6 +81,8 @@ async function estimateGas(req, res) {
 async function simulateGas(req, res) {
   try {
     const { from, to, data, value, abi, functionName, args } = req.body;
+    const chain = getChainFromRequest(req);
+    const chainMetadata = getChainMetadata(chain);
 
     if (!to) return res.status(400).json(errorResponse('to address is required'));
     if (!ethers.isAddress(to)) return res.status(400).json(errorResponse('Invalid to address'));
@@ -93,7 +100,7 @@ async function simulateGas(req, res) {
       }
     }
 
-    const provider = getProvider();
+    const provider = getProvider(chain);
     const feeData = await provider.getFeeData();
 
     const txRequest = {
@@ -122,7 +129,6 @@ async function simulateGas(req, res) {
     const estimatedCostWithBufferWei = baseFeeWei * gasWithBuffer;
 
     return res.json(successResponse({
-      network: 'Arbitrum Sepolia',
       to,
       from: from || null,
       functionName: functionName || null,
@@ -131,7 +137,8 @@ async function simulateGas(req, res) {
       estimatedCostEth: ethers.formatEther(estimatedCostWei),
       estimatedCostWithBufferEth: ethers.formatEther(estimatedCostWithBufferWei),
       gasPrice: `${parseFloat(ethers.formatUnits(baseFeeWei, 'gwei')).toFixed(4)} gwei`,
-      callData
+      callData,
+      ...chainMetadata
     }));
   } catch (error) {
     console.error('simulateGas error:', error);
@@ -143,9 +150,11 @@ async function simulateGas(req, res) {
 async function gasHistory(req, res) {
   try {
     const { blocks = 20 } = req.query;
+    const chain = getChainFromRequest(req);
+    const chainMetadata = getChainMetadata(chain);
     const count = Math.min(parseInt(blocks) || 20, 50);
 
-    const provider = getProvider();
+    const provider = getProvider(chain);
     const latest = await provider.getBlockNumber();
 
     const blockNums = Array.from({ length: count }, (_, i) => latest - (count - 1 - i));
@@ -170,11 +179,11 @@ async function gasHistory(req, res) {
     const max = validFees.length ? Math.max(...validFees).toFixed(6) : null;
 
     return res.json(successResponse({
-      network: 'Arbitrum Sepolia',
       latestBlock: latest,
       blocksRequested: count,
       stats: { avgBaseFeeGwei: avg, minBaseFeeGwei: min, maxBaseFeeGwei: max },
-      history
+      history,
+      ...chainMetadata
     }));
   } catch (error) {
     console.error('gasHistory error:', error);

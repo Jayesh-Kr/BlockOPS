@@ -11,7 +11,7 @@ function AgentBuilderContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const agentId = searchParams.get("agent")
-  const { ready, authenticated, loading, user, showPrivateKeySetup, setShowPrivateKeySetup, syncUser } = useAuth()
+  const { ready, authenticated, loading, user, showPrivateKeySetup, setShowPrivateKeySetup, syncUser, pkpSchemaReady } = useAuth()
 
   useEffect(() => {
     if (ready && !authenticated) {
@@ -50,6 +50,7 @@ function AgentBuilderContent() {
           onOpenChange={setShowPrivateKeySetup}
           userId={user.id}
           onComplete={syncUser}
+          pkpSchemaReady={pkpSchemaReady}
         />
       )}
     </main>
@@ -72,4 +73,3 @@ export default function AgentBuilder() {
     </Suspense>
   )
 }
-

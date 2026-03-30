@@ -1,21 +1,25 @@
-const { EXPLORER_BASE_URL } = require('../config/constants');
+const { DEFAULT_CHAIN, getChainConfig } = require('../config/constants');
 
 /**
  * Generate transaction explorer URL
  * @param {string} txHash - Transaction hash
+ * @param {string} chain - Canonical chain id
  * @returns {string} Explorer URL
  */
-function getTxExplorerUrl(txHash) {
-  return `${EXPLORER_BASE_URL}/tx/${txHash}`;
+function getTxExplorerUrl(txHash, chain = DEFAULT_CHAIN) {
+  const config = getChainConfig(chain);
+  return `${config.explorerBaseUrl}/tx/${txHash}`;
 }
 
 /**
  * Generate address explorer URL
  * @param {string} address - Contract or wallet address
+ * @param {string} chain - Canonical chain id
  * @returns {string} Explorer URL
  */
-function getAddressExplorerUrl(address) {
-  return `${EXPLORER_BASE_URL}/address/${address}`;
+function getAddressExplorerUrl(address, chain = DEFAULT_CHAIN) {
+  const config = getChainConfig(chain);
+  return `${config.explorerBaseUrl}/address/${address}`;
 }
 
 /**

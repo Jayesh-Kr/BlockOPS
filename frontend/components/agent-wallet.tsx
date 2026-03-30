@@ -30,10 +30,11 @@ import {
   getAddressFromPrivateKey,
   isValidPrivateKey,
   saveWalletToUser,
-  getTokenBalances,
+  getTokenBalancesForChain,
   removeWalletFromUser,
 } from "@/lib/wallet"
 import { toast } from "@/components/ui/use-toast"
+import { CHAIN_CONFIGS, getStoredChain, normalizeChainId, setStoredChain, type SupportedChainId } from "@/lib/chains"
 
 interface AgentWalletModalProps {
   open: boolean
@@ -50,19 +51,24 @@ export function AgentWalletModal({ open, onOpenChange, hideButton = false }: Age
   const [isImporting, setIsImporting] = useState(false)
   const [copied, setCopied] = useState(false)
   const [newPrivateKey, setNewPrivateKey] = useState<string | null>(null)
-  const [tokenBalances, setTokenBalances] = useState<{ stt: string } | null>(null)
+  const [selectedChain, setSelectedChain] = useState<SupportedChainId>("flow-testnet")
+  const [tokenBalances, setTokenBalances] = useState<{ native: string; symbol: string } | null>(null)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
 
   const fetchBalances = useCallback(async () => {
     if (!dbUser?.wallet_address) return
     try {
-      const balances = await getTokenBalances(dbUser.wallet_address)
+      const balances = await getTokenBalancesForChain(dbUser.wallet_address, selectedChain)
       setTokenBalances(balances)
     } catch (error) {
       console.error("Error fetching balances:", error)
     }
-  }, [dbUser?.wallet_address])
+  }, [dbUser?.wallet_address, selectedChain])
+
+  useEffect(() => {
+    setSelectedChain(getStoredChain())
+  }, [])
 
   // Fetch balances immediately when component mounts and user has a wallet
   useEffect(() => {
@@ -202,12 +208,13 @@ export function AgentWalletModal({ open, onOpenChange, hideButton = false }: Age
   }
 
   const handleClaimFunds = () => {
-    window.open("https://www.alchemy.com/faucets/arbitrum-sepolia", "_blank")
+    window.open(CHAIN_CONFIGS[selectedChain].faucetUrl, "_blank")
   }
 
   // Get balance for display in button
-  const displayBalance = tokenBalances?.stt || "0.00"
+  const displayBalance = tokenBalances?.native || "0.00"
   const hasWallet = !!dbUser?.wallet_address
+  const selectedChainConfig = CHAIN_CONFIGS[selectedChain]
 
   return (
     <>
@@ -224,13 +231,13 @@ export function AgentWalletModal({ open, onOpenChange, hideButton = false }: Age
               <div className="relative w-5 h-5 shrink-0">
                 <Image
                   src="/stt-logo.png"
-                  alt="STT"
+                  alt={selectedChainConfig.symbol}
                   fill
                   className="object-contain"
                   unoptimized
                 />
               </div>
-              <span className="font-semibold">{displayBalance} STT</span>
+              <span className="font-semibold">{displayBalance} {selectedChainConfig.symbol}</span>
             </>
           ) : (
             <>
@@ -253,6 +260,25 @@ export function AgentWalletModal({ open, onOpenChange, hideButton = false }: Age
 
           {dbUser?.wallet_address ? (
             <div className="space-y-6 py-4">
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">Network</Label>
+                <select
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  value={selectedChain}
+                  onChange={(event) => {
+                    const nextChain = normalizeChainId(event.target.value)
+                    setSelectedChain(nextChain)
+                    setStoredChain(nextChain)
+                  }}
+                >
+                  {Object.values(CHAIN_CONFIGS).map((chain) => (
+                    <option key={chain.id} value={chain.id}>
+                      {chain.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               {/* Wallet Address */}
               <div className="space-y-2">
                 <Label className="text-sm font-semibold">Wallet Address</Label>
@@ -273,7 +299,7 @@ export function AgentWalletModal({ open, onOpenChange, hideButton = false }: Age
                   <div className="relative w-12 h-12 shrink-0">
                     <Image
                       src="/stt-logo.png"
-                      alt="STT"
+                      alt={selectedChainConfig.symbol}
                       fill
                       className="object-contain"
                       unoptimized
@@ -281,13 +307,16 @@ export function AgentWalletModal({ open, onOpenChange, hideButton = false }: Age
                   </div>
                   <div className="flex items-baseline gap-2">
                     <div className="text-4xl font-bold leading-none">
-                      {tokenBalances?.stt || "0.00"}
+                      {tokenBalances?.native || "0.00"}
                     </div>
                     <div className="text-sm text-muted-foreground font-medium">
-                      STT
+                      {selectedChainConfig.symbol}
                     </div>
                   </div>
                 </div>
+                <p className="text-center text-xs text-muted-foreground">
+                  Viewing balances on {selectedChainConfig.name}
+                </p>
               </div>
 
               {/* Actions */}

@@ -9,14 +9,18 @@
 -- Stores user information from Privy authentication
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, -- Privy DID (format: did:privy:xxxxx)
-  private_key TEXT, -- Encrypted private key for agent wallet (optional)
-  wallet_address TEXT, -- Agent wallet address
+  private_key TEXT, -- Lit-encrypted legacy EOA private key (optional)
+  wallet_address TEXT, -- Agent wallet address (legacy EOA or PKP-backed)
+  wallet_type TEXT CHECK (wallet_type IN ('traditional', 'pkp')),
+  pkp_public_key TEXT, -- Lit PKP public key for seedless wallet mode
+  pkp_token_id TEXT, -- ERC-721 tokenId for the minted PKP
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Index for faster lookups
 CREATE INDEX IF NOT EXISTS idx_users_wallet_address ON users(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_users_wallet_type ON users(wallet_type);
 
 -- ============================================
 -- 2. AGENTS TABLE
@@ -186,4 +190,3 @@ FROM information_schema.columns
 WHERE table_schema = 'public'
   AND table_name IN ('users', 'agents', 'conversations', 'messages', 'agent_executions', 'tool_executions', 'api_usage')
 ORDER BY table_name, ordinal_position;
-

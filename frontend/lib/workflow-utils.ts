@@ -47,6 +47,12 @@ const getDefaultLabel = (type: string): string => {
     approve_token: "Approve Token",
     revoke_approval: "Revoke Approval",
     send_email: "Send Email",
+    create_savings_plan: "Flow Savings Plan",
+    schedule_payout: "Flow Scheduled Payout",
+    create_payroll_plan: "Flow Payroll Plan",
+    create_grant_payout: "Flow Grant Payout",
+    get_flow_network_overview: "Flow Network Overview",
+    get_flow_wallet_readiness: "Flow Wallet Readiness",
   }
   return labels[type] || "Tool"
 }
@@ -69,6 +75,12 @@ const getDefaultDescription = (type: string): string => {
     approve_token: "Grant spending approval",
     revoke_approval: "Remove token allowance",
     send_email: "Send email notifications",
+    create_savings_plan: "Create recurring savings on Flow",
+    schedule_payout: "Create recurring payouts on Flow",
+    create_payroll_plan: "Create recurring payroll on Flow",
+    create_grant_payout: "Create recurring grants on Flow",
+    get_flow_network_overview: "Show Flow config, faucet, and explorer",
+    get_flow_wallet_readiness: "Check if a wallet is ready for Flow",
   }
   return descriptions[type] || "Workflow tool"
 }

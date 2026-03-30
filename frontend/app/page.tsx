@@ -57,7 +57,7 @@ function NumberTicker({
 }
 
 export default function Home() {
-  const { ready, authenticated, login, loading, logout, user, showPrivateKeySetup, setShowPrivateKeySetup, syncUser } = useAuth()
+  const { ready, authenticated, login, loading, logout, user, showPrivateKeySetup, setShowPrivateKeySetup, syncUser, pkpSchemaReady } = useAuth()
   const [isLoggingIn, setIsLoggingIn] = useState(false)
   const [loadingLink, setLoadingLink] = useState<string | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -704,6 +704,7 @@ export default function Home() {
           onOpenChange={setShowPrivateKeySetup}
           userId={user.id}
           onComplete={syncUser}
+          pkpSchemaReady={pkpSchemaReady}
         />
       )}
     </div>

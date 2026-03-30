@@ -6,6 +6,7 @@
  */
 
 import { BLOCKCHAIN_BACKEND_URL, BLOCKCHAIN_API_KEY } from './backend'
+import type { WalletType } from './supabase'
 
 /**
  * Contract Function Interface
@@ -119,7 +120,12 @@ export async function discoverContract(
 export async function executeNaturalLanguageCommand(
   contractAddress: string,
   command: string,
-  privateKey: string,
+  signingContext: {
+    privateKey?: string
+    walletType?: WalletType | null
+    pkpPublicKey?: string | null
+    pkpTokenId?: string | null
+  },
   confirmExecution: boolean = false,
   decimals: number = 18
 ): Promise<CommandExecutionResponse> {
@@ -134,7 +140,10 @@ export async function executeNaturalLanguageCommand(
       body: JSON.stringify({
         contractAddress,
         command,
-        privateKey,
+        privateKey: signingContext.privateKey,
+        walletType: signingContext.walletType,
+        pkpPublicKey: signingContext.pkpPublicKey,
+        pkpTokenId: signingContext.pkpTokenId,
         confirmExecution,
         decimals,
       }),
@@ -161,7 +170,12 @@ export async function executeNaturalLanguageCommand(
 export async function quickExecuteCommand(
   contractAddress: string,
   command: string,
-  privateKey: string,
+  signingContext: {
+    privateKey?: string
+    walletType?: WalletType | null
+    pkpPublicKey?: string | null
+    pkpTokenId?: string | null
+  },
   decimals: number = 18
 ): Promise<CommandExecutionResponse> {
   const response = await fetch(
@@ -175,7 +189,10 @@ export async function quickExecuteCommand(
       body: JSON.stringify({
         contractAddress,
         command,
-        privateKey,
+        privateKey: signingContext.privateKey,
+        walletType: signingContext.walletType,
+        pkpPublicKey: signingContext.pkpPublicKey,
+        pkpTokenId: signingContext.pkpTokenId,
         decimals,
       }),
     }

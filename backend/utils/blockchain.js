@@ -1,5 +1,5 @@
 const { ethers } = require('ethers');
-const { ARBITRUM_SEPOLIA_RPC } = require('../config/constants');
+const { DEFAULT_CHAIN, getChainConfig } = require('../config/constants');
 
 function normalizePrivateKey(privateKey) {
   if (typeof privateKey !== 'string') return null;
@@ -11,23 +11,22 @@ function normalizePrivateKey(privateKey) {
 }
 
 /**
- * Get a provider instance for Arbitrum Sepolia
+ * Get a provider instance for a supported chain
+ * @param {string} chain - Canonical chain id
  * @returns {ethers.JsonRpcProvider} Provider instance
  */
-function getProvider() {
-  return new ethers.JsonRpcProvider(ARBITRUM_SEPOLIA_RPC);
+function getProvider(chain = DEFAULT_CHAIN) {
+  const config = getChainConfig(chain);
+  return new ethers.JsonRpcProvider(config.rpcUrl);
 }
 
 /**
  * Get a wallet instance from private key
  * @param {string} privateKey - Private key with 0x prefix
  * @param {ethers.JsonRpcProvider} provider - Provider instance (optional)
+ * @param {string} chain - Canonical chain id (optional)
  * @returns {ethers.Wallet} Wallet instance
  */
-function getWallet(privateKey, provider = null) {
-  const _provider = provider || getProvider();
-  return new ethers.Wallet(normalizePrivateKey(privateKey), _provider);
-}
 
 /**
  * Get the optional backend signer wallet from environment configuration
@@ -42,6 +41,10 @@ function getServerWallet(provider = null) {
   }
 
   return getWallet(serverPrivateKey, provider);
+}
+function getWallet(privateKey, provider = null, chain = DEFAULT_CHAIN) {
+  const _provider = provider || getProvider(chain);
+  return new ethers.Wallet(privateKey, _provider);
 }
 
 /**
@@ -61,8 +64,8 @@ function getContract(address, abi, signerOrProvider) {
  * @param {bigint} requiredAmount - Required amount in wei
  * @returns {Promise<boolean>} True if balance is sufficient
  */
-async function hasSufficientBalance(address, requiredAmount) {
-  const provider = getProvider();
+async function hasSufficientBalance(address, requiredAmount, chain = DEFAULT_CHAIN) {
+  const provider = getProvider(chain);
   const balance = await provider.getBalance(address);
   return balance >= requiredAmount;
 }

@@ -23,9 +23,13 @@ const {
 const {
   ETHERSCAN_V2_BASE_URL,
   ARBITRUM_SEPOLIA_CHAIN_ID,
-  ETHERSCAN_API_KEY,
-  EXPLORER_BASE_URL
+  ETHERSCAN_API_KEY
 } = require('../config/constants');
+const {
+  getChainFromRequest,
+  getChainMetadata,
+  isArbitrumChain
+} = require('../utils/chains');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -88,11 +92,13 @@ function decodeRevertBytes(data) {
 async function getTransaction(req, res) {
   try {
     const { hash } = req.params;
+    const chain = getChainFromRequest(req);
+    const chainMetadata = getChainMetadata(chain);
     if (!hash || !/^0x[a-fA-F0-9]{64}$/.test(hash)) {
       return res.status(400).json(errorResponse('Invalid transaction hash'));
     }
 
-    const provider = getProvider();
+    const provider = getProvider(chain);
     const [tx, receipt] = await Promise.all([
       provider.getTransaction(hash),
       provider.getTransactionReceipt(hash).catch(() => null)
@@ -149,8 +155,8 @@ async function getTransaction(req, res) {
         blockNumber: receipt.blockNumber
       } : null,
       revertReason,
-      explorerUrl: getTxExplorerUrl(hash),
-      network: 'Arbitrum Sepolia'
+      explorerUrl: getTxExplorerUrl(hash, chain),
+      ...chainMetadata
     }));
   } catch (error) {
     console.error('getTransaction error:', error);
@@ -162,12 +168,14 @@ async function getTransaction(req, res) {
 async function getBlock(req, res) {
   try {
     const { number } = req.params;
+    const chain = getChainFromRequest(req);
+    const chainMetadata = getChainMetadata(chain);
     const blockTag = number === 'latest' ? 'latest' : parseInt(number);
     if (number !== 'latest' && isNaN(blockTag)) {
       return res.status(400).json(errorResponse('Invalid block number'));
     }
 
-    const provider = getProvider();
+    const provider = getProvider(chain);
     const block = await provider.getBlock(blockTag);
     if (!block) return res.status(404).json(errorResponse('Block not found'));
 
@@ -183,7 +191,7 @@ async function getBlock(req, res) {
       gasUsedPct: ((Number(block.gasUsed) / Number(block.gasLimit)) * 100).toFixed(2) + '%',
       baseFeePerGas: block.baseFeePerGas ? ethers.formatUnits(block.baseFeePerGas, 'gwei') + ' gwei' : null,
       transactionCount: block.transactions.length,
-      network: 'Arbitrum Sepolia'
+      ...chainMetadata
     }));
   } catch (error) {
     console.error('getBlock error:', error);
@@ -200,11 +208,13 @@ async function getBlock(req, res) {
 async function getEvents(req, res) {
   try {
     const { contractAddress, eventSignature, fromBlock, toBlock, topics, limit = 100 } = req.body;
+    const chain = getChainFromRequest(req);
+    const chainMetadata = getChainMetadata(chain);
 
     if (!contractAddress) return res.status(400).json(errorResponse('contractAddress is required'));
     if (!ethers.isAddress(contractAddress)) return res.status(400).json(errorResponse('Invalid contractAddress'));
 
-    const provider = getProvider();
+    const provider = getProvider(chain);
     const latest = await provider.getBlockNumber();
 
     const _fromBlock = fromBlock ?? Math.max(0, latest - 1000);
@@ -249,7 +259,7 @@ async function getEvents(req, res) {
         topics: log.topics,
         data: log.data,
         decodedArgs: parsedArgs,
-        explorerUrl: getTxExplorerUrl(log.transactionHash)
+        explorerUrl: getTxExplorerUrl(log.transactionHash, chain)
       };
     });
 
@@ -261,7 +271,7 @@ async function getEvents(req, res) {
       totalFound: logs.length,
       returned: decoded.length,
       events: decoded,
-      network: 'Arbitrum Sepolia'
+      ...chainMetadata
     }));
   } catch (error) {
     console.error('getEvents error:', error);
@@ -320,6 +330,8 @@ async function decodeCalldata(req, res) {
 async function decodeRevert(req, res) {
   try {
     const { data, txHash } = req.body;
+    const chain = getChainFromRequest(req);
+    const chainMetadata = getChainMetadata(chain);
 
     let revertData = data;
 
@@ -328,18 +340,19 @@ async function decodeRevert(req, res) {
       if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
         return res.status(400).json(errorResponse('Invalid txHash'));
       }
-      const provider = getProvider();
+      const provider = getProvider(chain);
       const tx = await provider.getTransaction(txHash);
       if (!tx) return res.status(404).json(errorResponse('Transaction not found'));
 
       try {
         await provider.call({ to: tx.to, data: tx.data, from: tx.from }, tx.blockNumber);
-        return res.json(successResponse({ revertReason: null, message: 'Transaction did not revert (simulation succeeded)' }));
+        return res.json(successResponse({ revertReason: null, message: 'Transaction did not revert (simulation succeeded)', ...chainMetadata }));
       } catch (callErr) {
         revertData = callErr?.data || callErr?.error?.data;
         if (!revertData) {
           return res.json(successResponse({
-            revertReason: { type: 'Error', message: callErr.reason || callErr.message }
+            revertReason: { type: 'Error', message: callErr.reason || callErr.message },
+            ...chainMetadata
           }));
         }
       }
@@ -351,7 +364,8 @@ async function decodeRevert(req, res) {
 
     return res.json(successResponse({
       revertReason,
-      raw: revertData
+      raw: revertData,
+      ...chainMetadata
     }));
   } catch (error) {
     console.error('decodeRevert error:', error);
@@ -368,9 +382,14 @@ async function getAddressTxs(req, res) {
   try {
     const { address } = req.params;
     const { limit = 20, page = 1, sort = 'desc' } = req.query;
+    const chain = getChainFromRequest(req);
+    const chainMetadata = getChainMetadata(chain);
 
     if (!ethers.isAddress(address)) {
       return res.status(400).json(errorResponse('Invalid address'));
+    }
+    if (!isArbitrumChain(chain)) {
+      return res.status(400).json(errorResponse('Address transaction history is available on Arbitrum Sepolia only in the current build.'));
     }
     if (!ETHERSCAN_API_KEY) {
       return res.status(503).json(errorResponse('ETHERSCAN_API_KEY not configured'));
@@ -408,10 +427,10 @@ async function getAddressTxs(req, res) {
 
     return res.json(successResponse({
       address,
-      explorerUrl: getAddressExplorerUrl(address),
+      explorerUrl: getAddressExplorerUrl(address, chain),
       transactionCount: txs.length,
       transactions: txs,
-      network: 'Arbitrum Sepolia'
+      ...chainMetadata
     }));
   } catch (error) {
     console.error('getAddressTxs error:', error);

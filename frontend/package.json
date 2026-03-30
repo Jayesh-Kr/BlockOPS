@@ -12,6 +12,9 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@hookform/resolvers": "^3.10.0",
+    "@lit-protocol/auth": "^8.2.3",
+    "@lit-protocol/lit-client": "^8.3.1",
+    "@lit-protocol/networks": "^8.4.1",
     "@privy-io/react-auth": "^3.16.0",
     "@radix-ui/react-accordion": "^1.2.2",
     "@radix-ui/react-alert-dialog": "^1.1.4",
@@ -68,6 +71,7 @@
     "tailwind-merge": "^2.5.5",
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^0.9.9",
+    "viem": "^2.47.6",
     "zod": "^3.25.76"
   },
   "devDependencies": {

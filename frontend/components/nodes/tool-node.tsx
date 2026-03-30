@@ -19,8 +19,13 @@ import {
   CheckCircle,
   XCircle,
   Mail,
+  HandCoins,
+  Landmark,
+  Network,
+  ShieldCheck,
 } from "lucide-react"
 import type { NodeData } from "@/lib/types"
+import { getToolSupportMeta } from "@/lib/tool-support"
 
 const toolIcons: Record<string, React.ReactNode> = {
   transfer: <ArrowRightLeft className="h-4 w-4" />,
@@ -39,6 +44,12 @@ const toolIcons: Record<string, React.ReactNode> = {
   approve_token: <CheckCircle className="h-4 w-4" />,
   revoke_approval: <XCircle className="h-4 w-4" />,
   send_email: <Mail className="h-4 w-4" />,
+  create_savings_plan: <PiggyBank className="h-4 w-4" />,
+  schedule_payout: <HandCoins className="h-4 w-4" />,
+  create_payroll_plan: <HandCoins className="h-4 w-4" />,
+  create_grant_payout: <Landmark className="h-4 w-4" />,
+  get_flow_network_overview: <Network className="h-4 w-4" />,
+  get_flow_wallet_readiness: <ShieldCheck className="h-4 w-4" />,
 }
 
 const toolColors: Record<string, { border: string; bg: string; text: string }> = {
@@ -58,21 +69,35 @@ const toolColors: Record<string, { border: string; bg: string; text: string }> =
   approve_token: { border: "border-foreground/50", bg: "bg-foreground/10", text: "text-foreground" },
   revoke_approval: { border: "border-foreground/60", bg: "bg-foreground/15", text: "text-foreground" },
   send_email: { border: "border-foreground/40", bg: "bg-foreground/5", text: "text-foreground" },
+  create_savings_plan: { border: "border-foreground/50", bg: "bg-foreground/10", text: "text-foreground" },
+  schedule_payout: { border: "border-foreground/60", bg: "bg-foreground/15", text: "text-foreground" },
+  create_payroll_plan: { border: "border-foreground/40", bg: "bg-foreground/5", text: "text-foreground" },
+  create_grant_payout: { border: "border-foreground/50", bg: "bg-foreground/10", text: "text-foreground" },
+  get_flow_network_overview: { border: "border-foreground/60", bg: "bg-foreground/15", text: "text-foreground" },
+  get_flow_wallet_readiness: { border: "border-foreground/40", bg: "bg-foreground/5", text: "text-foreground" },
 }
 
 export const ToolNode = memo(({ data, type, isConnectable }: NodeProps<NodeData>) => {
   const colors = toolColors[type || ""] || { border: "border-foreground/30", bg: "bg-foreground/5", text: "text-foreground" }
   const icon = toolIcons[type || ""] || null
+  const supportMeta = getToolSupportMeta(type)
 
   return (
     <div className={`px-4 py-2 shadow-md rounded-md bg-background border-2 ${colors.border} min-w-[150px]`}>
-      <div className="flex items-center">
+      <div className="flex items-start">
         <div className={`rounded-full w-8 h-8 flex items-center justify-center ${colors.bg} ${colors.text}`}>
           {icon}
         </div>
-        <div className="ml-2">
+        <div className="ml-2 flex-1 min-w-0">
           <div className="text-sm font-bold">{data.label || type}</div>
           <div className="text-xs text-muted-foreground">{data.description || "Tool"}</div>
+          <div className="mt-1">
+            <span
+              className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${supportMeta.className}`}
+            >
+              {supportMeta.label}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -83,4 +108,3 @@ export const ToolNode = memo(({ data, type, isConnectable }: NodeProps<NodeData>
 })
 
 ToolNode.displayName = "ToolNode"
-

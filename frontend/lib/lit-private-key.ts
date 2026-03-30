@@ -1,10 +1,12 @@
 import { ethers } from "ethers"
 
 export const LIT_PRIVATE_KEY_PREFIX = "lit:v1:"
+const LIT_PRIVATE_KEY_PROVIDERS = ["lit-chipotle", "lit-naga-test"] as const
+type LitPrivateKeyProvider = (typeof LIT_PRIVATE_KEY_PROVIDERS)[number]
 
 export interface LitStoredPrivateKeyPayload {
   version: 1
-  provider: "lit-chipotle"
+  provider: LitPrivateKeyProvider
   pkpId: string
   ciphertext: string
   createdAt: string
@@ -48,6 +50,10 @@ export function serializeLitStoredPrivateKey(payload: LitStoredPrivateKeyPayload
   return `${LIT_PRIVATE_KEY_PREFIX}${JSON.stringify(payload)}`
 }
 
+function isSupportedLitProvider(provider: unknown): provider is LitPrivateKeyProvider {
+  return typeof provider === "string" && LIT_PRIVATE_KEY_PROVIDERS.includes(provider as LitPrivateKeyProvider)
+}
+
 export function parseLitStoredPrivateKey(privateKey: string): LitStoredPrivateKeyPayload {
   if (!isLitStoredPrivateKey(privateKey)) {
     throw new Error("Not a Lit-managed private key payload")
@@ -66,7 +72,7 @@ export function parseLitStoredPrivateKey(privateKey: string): LitStoredPrivateKe
     !parsed ||
     typeof parsed !== "object" ||
     (parsed as any).version !== 1 ||
-    (parsed as any).provider !== "lit-chipotle" ||
+    !isSupportedLitProvider((parsed as any).provider) ||
     typeof (parsed as any).pkpId !== "string" ||
     typeof (parsed as any).ciphertext !== "string"
   ) {
@@ -99,7 +105,7 @@ export async function encryptPrivateKeyForStorage(privateKey: string): Promise<s
 
   return serializeLitStoredPrivateKey({
     version: 1,
-    provider: "lit-chipotle",
+    provider: "lit-naga-test",
     pkpId: data.pkpId,
     ciphertext: data.ciphertext,
     createdAt: new Date().toISOString(),

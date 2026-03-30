@@ -21,7 +21,7 @@ interface UserProfileProps {
 }
 
 export function UserProfile({ onLogout }: UserProfileProps) {
-  const { user, dbUser, isWalletLogin, privyWalletAddress, syncUser } = useAuth()
+  const { user, dbUser, isWalletLogin, privyWalletAddress, syncUser, pkpSchemaReady } = useAuth()
   const [copied, setCopied] = useState(false)
   const [showPrivateKeyModal, setShowPrivateKeyModal] = useState(false)
 
@@ -134,7 +134,7 @@ export function UserProfile({ onLogout }: UserProfileProps) {
                   <span className="text-xs font-medium">Set Up Agent Wallet</span>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Add your private key (stored with Lit encryption) to enable transactions
+                  Generate a true seedless Lit PKP wallet on naga-test, or import an existing wallet with Lit-encrypted storage
                 </p>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -155,6 +155,7 @@ export function UserProfile({ onLogout }: UserProfileProps) {
           onOpenChange={setShowPrivateKeyModal}
           userId={user.id}
           onComplete={syncUser}
+          pkpSchemaReady={pkpSchemaReady}
         />
       )}
     </>

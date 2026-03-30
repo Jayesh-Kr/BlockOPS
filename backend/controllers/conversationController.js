@@ -3,11 +3,24 @@ const { buildContext, truncateMessage } = require('../utils/memory');
 const { chatWithAI } = require('../services/aiService');
 const { intelligentToolRouting, convertToAgentFormat } = require('../services/toolRouter');
 const { executeToolsDirectly: executeToolsDirectlyService, formatToolResponse } = require('../services/directToolExecutor');
+const {
+  archiveToolExecutionLogs,
+  formatExecutionAuditForChat,
+  sanitizeToolResultsForResponse
+} = require('../services/toolAuditLogService');
 const { fireEvent } = require('../services/webhookService');
 const { BlockOpsAgentRuntime } = require('../services/agentRuntime');
+const { DEFAULT_CHAIN, getChainConfig } = require('../config/constants');
+const { buildUnsupportedToolError, isToolSupportedOnChain, normalizeChainId } = require('../utils/chains');
 
 const IN_MEMORY_MESSAGE_LIMIT = 30;
+const DEFAULT_AUDIT_WAIT_MS = 8000;
 const inMemoryConversations = new Map();
+const UUID_V4_LIKE_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isUuidLike(value) {
+  return typeof value === 'string' && UUID_V4_LIKE_REGEX.test(value);
+}
 
 function createTempConversationId() {
   return `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -68,6 +81,7 @@ function addInMemoryMessage(conversationId, role, content, toolCalls = null) {
   }
 
   const message = {
+    id: `mem-msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     role,
     content,
     created_at: new Date().toISOString()
@@ -89,6 +103,101 @@ function getInMemoryMessages(conversationId) {
   return conversation?.messages || [];
 }
 
+function hasInMemoryConversation(conversationId) {
+  return inMemoryConversations.has(conversationId);
+}
+
+function appendAssistantMessageToConversation(conversationId, content, toolCalls = null) {
+  addInMemoryMessage(conversationId, 'assistant', content, toolCalls);
+}
+
+function getAuditWaitMs() {
+  const parsed = parseInt(process.env.FILECOIN_AUDIT_WAIT_MS || `${DEFAULT_AUDIT_WAIT_MS}`, 10);
+  if (Number.isNaN(parsed) || parsed < 500) {
+    return DEFAULT_AUDIT_WAIT_MS;
+  }
+
+  return Math.min(parsed, 60000);
+}
+
+function extractExplicitAddressFromMessage(message = '') {
+  const match = String(message).match(/0x[a-fA-F0-9]{40}/);
+  return match ? match[0] : null;
+}
+
+function extractExplicitChainFromMessage(message = '') {
+  const normalized = String(message || '').toLowerCase();
+  if (!normalized) return null;
+
+  if (/\b(arbitrum sepolia|arb sepolia|arbitrum)\b/.test(normalized)) {
+    return 'arbitrum-sepolia';
+  }
+
+  if (/\b(flow evm testnet|flow testnet|flow evm|flow)\b/.test(normalized)) {
+    return 'flow-testnet';
+  }
+
+  return null;
+}
+
+function isSelfWalletQuery(message = '') {
+  const normalized = String(message || '').toLowerCase();
+  if (!normalized) return false;
+
+  return (
+    /\bmy\b/.test(normalized) ||
+    /\bme\b/.test(normalized) ||
+    /\bmine\b/.test(normalized) ||
+    /\bmy wallet\b/.test(normalized) ||
+    /\bwhat is my balance\b/.test(normalized) ||
+    /\bcheck my balance\b/.test(normalized) ||
+    /\bwallet balance\b/.test(normalized)
+  );
+}
+
+function createPendingExecutionAudit(toolResults) {
+  const toolCalls = Array.isArray(toolResults?.tool_calls) ? toolResults.tool_calls : [];
+  const results = Array.isArray(toolResults?.results) ? toolResults.results : [];
+  const now = new Date().toISOString();
+
+  const entries = results.map((result, index) => {
+    const toolCall = toolCalls[index] || {};
+    const payload = result?.result || {};
+    const txHash =
+      payload.transactionHash ||
+      payload.txHash ||
+      payload.tx_hash ||
+      payload.hash ||
+      payload.receipt?.transactionHash ||
+      null;
+    const amount = payload.amount || toolCall?.parameters?.amount || null;
+
+    return {
+      id: `pending-${Date.now()}-${index + 1}`,
+      tool: toolCall.tool || result?.tool || `tool_step_${index + 1}`,
+      success: Boolean(result?.success),
+      chain: payload.chain || payload.network || null,
+      timestamp: now,
+      txHash,
+      amount,
+      storageStatus: 'pending',
+      filecoinCid: null,
+      filecoinUri: null,
+      prepareTxHash: null,
+      storageError: 'Filecoin archival in progress',
+      dbError: null
+    };
+  });
+
+  return {
+    totalCount: entries.length,
+    successfulCount: entries.filter((entry) => entry.success).length,
+    filecoinStoredCount: 0,
+    pending: true,
+    entries
+  };
+}
+
 /**
  * Main chat endpoint - handles conversation and AI response
  * POST /api/chat
@@ -102,11 +211,18 @@ async function chat(req, res) {
       conversationId,
       systemPrompt,
       walletAddress,
+      walletType,
+      pkpPublicKey,
+      pkpTokenId,
       privateKey,
       enabledTools,
+      deliveryPlatform,
+      telegramChatId,
       defaultEmailTo,
-      userEmail
+      userEmail,
+      chain
     } = req.body;
+    const selectedChain = normalizeChainId(chain || DEFAULT_CHAIN);
 
     // Validation
     if (!agentId || !userId || !message) {
@@ -116,7 +232,7 @@ async function chat(req, res) {
     }
 
     // Fire webhook for inbound message (non-blocking)
-    fireEvent(agentId, 'agent.message', { userId, message, walletAddress: walletAddress || null });
+    fireEvent(agentId, 'agent.message', { userId, message, walletAddress: walletAddress || null, chain: selectedChain });
     if (walletAddress) {
       console.log('[Chat] User wallet address:', walletAddress);
     } else {
@@ -125,13 +241,25 @@ async function chat(req, res) {
 
     // Truncate message if too long
     const truncatedMessage = truncateMessage(message);
+    const explicitChainInMessage = extractExplicitChainFromMessage(truncatedMessage);
+    const requestedChain = normalizeChainId(explicitChainInMessage || selectedChain);
+    const chainConfig = getChainConfig(requestedChain);
 
     // Get or create conversation (with Supabase if available, otherwise in-memory)
     let convId = conversationId;
     let isNewConversation = false;
     let messages = [];
-    let useSupabase = !!supabase; // Track whether we're using Supabase for this request
+    const idsAreSupabaseCompatible =
+      isUuidLike(agentId) &&
+      isUuidLike(userId) &&
+      (!conversationId || isUuidLike(conversationId));
+
+    let useSupabase = !!supabase && idsAreSupabaseCompatible; // Track whether we're using Supabase for this request
     const conversationTitle = truncatedMessage.slice(0, 100);
+
+    if (!!supabase && !idsAreSupabaseCompatible) {
+      console.log('[Chat] Non-UUID ids detected (likely Telegram/generic mode), using memory-only conversation mode');
+    }
 
     if (useSupabase) {
       // Use Supabase for persistent conversation memory
@@ -245,13 +373,74 @@ async function chat(req, res) {
     // Check if the message requires tools using intelligent AI routing
     console.log('[Chat] Analyzing message for tool requirements...');
     
-    const routingPlan = await intelligentToolRouting(truncatedMessage, messages);
+    const routingPlan = await intelligentToolRouting(truncatedMessage, messages, {
+      chain: requestedChain,
+      chainId: chainConfig.chainId,
+      networkName: chainConfig.name
+    });
+
+    if (routingPlan.execution_plan?.steps?.length) {
+      const explicitAddressInMessage = extractExplicitAddressFromMessage(truncatedMessage);
+      const shouldPreferRequestWallet = Boolean(walletAddress) && !explicitAddressInMessage && isSelfWalletQuery(truncatedMessage);
+
+      routingPlan.execution_plan.steps = routingPlan.execution_plan.steps.map((step) => {
+        if (!step || !step.tool) return step;
+
+        const nextParameters = {
+          ...(step.parameters || {})
+        };
+
+        nextParameters.chain = requestedChain;
+
+        if (shouldPreferRequestWallet) {
+          if (step.tool === 'get_balance' || step.tool === 'get_portfolio') {
+            nextParameters.address = walletAddress;
+            nextParameters.wallet_address = walletAddress;
+          }
+
+          if (step.tool === 'schedule_reminder') {
+            const taskType = String(nextParameters.taskType || nextParameters.task_type || '').toLowerCase();
+            if (taskType === 'balance' || taskType === 'portfolio') {
+              nextParameters.walletAddress = walletAddress;
+              nextParameters.wallet_address = walletAddress;
+            }
+          }
+        }
+
+        return {
+          ...step,
+          parameters: nextParameters
+        };
+      });
+    }
+
+    routingPlan.requested_chain = requestedChain;
+    routingPlan.requested_network = chainConfig.name;
 
     const TOOL_ALIASES = {
       tx_status: 'lookup_transaction',
       wallet_history: 'wallet_history'
     };
     const normalizeToolName = (toolName) => TOOL_ALIASES[toolName] || toolName;
+    const isReminderToolAllowed = (step, allowedTools) => {
+      if (!step) return false;
+      if (allowedTools.includes(step.tool)) return true;
+
+      if (step.tool === 'schedule_reminder') {
+        const taskType = step.parameters?.taskType;
+        if (taskType === 'balance') return allowedTools.includes('get_balance');
+        if (taskType === 'price') return allowedTools.includes('fetch_price');
+        if (taskType === 'portfolio') {
+          return allowedTools.includes('get_portfolio') || allowedTools.includes('get_balance') || allowedTools.includes('fetch_price');
+        }
+      }
+
+      if (step.tool === 'list_reminders' || step.tool === 'cancel_reminder') {
+        return ['schedule_reminder', 'get_balance', 'get_portfolio', 'fetch_price'].some((toolName) => allowedTools.includes(toolName));
+      }
+
+      return false;
+    };
     let blockedByToolPermissions = false;
     let requestedTools = [];
     
@@ -261,7 +450,7 @@ async function chat(req, res) {
       if (routingPlan.execution_plan?.steps) {
         const originalSteps = [...routingPlan.execution_plan.steps];
         routingPlan.execution_plan.steps = routingPlan.execution_plan.steps.filter(
-          step => normalizedAllowedTools.includes(step.tool)
+          step => isReminderToolAllowed(step, normalizedAllowedTools)
         );
         requestedTools = [...new Set(originalSteps.map(step => step.tool))];
         if (originalSteps.length > 0 && routingPlan.execution_plan.steps.length === 0) {
@@ -278,10 +467,42 @@ async function chat(req, res) {
       isOffTopic: routingPlan.is_off_topic,
       requiresTools: routingPlan.requires_tools,
       complexity: routingPlan.complexity,
+      chain: requestedChain,
       executionType: routingPlan.execution_plan?.type,
       toolCount: routingPlan.execution_plan?.steps?.length || 0,
       blockedByToolPermissions
     });
+
+    const unsupportedStep = routingPlan.execution_plan?.steps?.find((step) => {
+      const stepChain = normalizeChainId(step?.parameters?.chain || requestedChain);
+      return !isToolSupportedOnChain(step.tool, stepChain);
+    });
+    if (unsupportedStep) {
+      const unsupportedChain = normalizeChainId(unsupportedStep?.parameters?.chain || requestedChain);
+      const unsupportedMessage = buildUnsupportedToolError(unsupportedStep.tool, unsupportedChain);
+
+      if (useSupabase) {
+        await supabase
+          .from('conversation_messages')
+          .insert({
+            conversation_id: convId,
+            role: 'assistant',
+            content: unsupportedMessage
+          });
+      } else {
+        addInMemoryMessage(convId, 'assistant', unsupportedMessage);
+      }
+
+      return res.json({
+        conversationId: convId,
+        message: unsupportedMessage,
+        isNewConversation,
+        messageCount: useSupabase ? messages.length + 1 : getInMemoryMessages(convId).length,
+        hasTools: false,
+        unsupportedTool: unsupportedStep.tool,
+        chain: unsupportedChain
+      });
+    }
 
     if (blockedByToolPermissions) {
       const permissionMessage = `I identified a blockchain action request, but this agent is not allowed to run the required tools: ${requestedTools.join(', ')}. No transaction was sent and no email was sent. Please enable those tools for this agent and retry.`;
@@ -336,6 +557,7 @@ async function chat(req, res) {
     
     let aiResponse;
     let toolResults = null;
+    let executionAudit = null;
 
     if (routingPlan.requires_tools && routingPlan.execution_plan?.steps?.length > 0) {
       // Filter missing_info: remove items that tools in the plan can resolve
@@ -357,10 +579,15 @@ async function chat(req, res) {
       
       // Also check if "missing" info is actually in conversation context
       const contextStr = `${messages.map(m => m.content).join(' ')} ${walletAddress || ''} ${defaultEmailTo || ''} ${userEmail || ''}`;
+      const hasUsablePrivateKey = typeof privateKey === 'string' && privateKey.trim().length > 0;
       const hasTransferStep = routingPlan.execution_plan?.steps?.some(step => step.tool === 'transfer');
       const hasSendEmailStep = routingPlan.execution_plan?.steps?.some(step => step.tool === 'send_email');
       const resolvedEmailTo = defaultEmailTo || userEmail || null;
       const finalMissingInfo = trulyMissingInfo.filter(info => {
+        if (hasUsablePrivateKey && /private\s*key|signing\s*key|privatekey/i.test(info)) {
+          console.log(`[Chat] Private key already provided, removing from missing: "${info}"`);
+          return false;
+        }
         // Check if the missing info might already be in conversation context
         if (/address/i.test(info) && /0x[a-fA-F0-9]{40}/.test(contextStr)) {
           console.log(`[Chat] Address found in context, removing from missing: "${info}"`);
@@ -402,7 +629,7 @@ async function chat(req, res) {
         const hasSignerKeyMissing = finalMissingInfo.some(info => /private\s*key|signing\s*key|privatekey/i.test(info));
         const signerSteps = (routingPlan.execution_plan?.steps || []).filter(step => signerTools.has(step.tool));
 
-        if (walletAddress && hasSignerKeyMissing && signerSteps.length > 0) {
+        if (!hasUsablePrivateKey && walletAddress && hasSignerKeyMissing && signerSteps.length > 0) {
           const signerToolList = [...new Set(signerSteps.map(step => step.tool))].join(', ');
           const signerMessage = `This request requires transaction signing for tool(s): ${signerToolList}. In direct fallback mode, only transfer supports wallet-sign preparation without a privateKey. Please provide privateKey for these tools, or retry when AI providers recover.`;
 
@@ -464,6 +691,28 @@ async function chat(req, res) {
       let primaryRuntimeResult = null;
       
       try {
+        const preferDirectExecution =
+          requestedChain !== 'arbitrum-sepolia' ||
+          (walletType === 'pkp' &&
+            routingPlan.execution_plan?.steps?.some(step => step.tool === 'transfer')) ||
+          routingPlan.execution_plan?.steps?.some(step =>
+            [
+              'schedule_reminder',
+              'list_reminders',
+              'cancel_reminder',
+              'create_savings_plan',
+              'schedule_payout',
+              'create_payroll_plan',
+              'create_grant_payout',
+              'get_flow_network_overview',
+              'get_flow_wallet_readiness'
+            ].includes(step.tool)
+          );
+
+        if (preferDirectExecution) {
+          throw new Error('Direct execution selected for this request');
+        }
+
         // Build context summary from recent messages for the agent
         const recentMessages = messages.slice(-10);
         
@@ -498,16 +747,18 @@ async function chat(req, res) {
           truncatedMessage, 
           routingPlan, 
           async () => {
-            const agentResponse = await fetch('http://localhost:8000/agent/chat', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                tools: tools,
-                user_message: enhancedMessage,
-                private_key: privateKey || null,
-                wallet_address: walletAddress || null
-              })
-            });
+            
+        const agentResponse = await fetch('http://localhost:8000/agent/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tools: tools,
+            user_message: enhancedMessage,
+            private_key: privateKey || null,
+            wallet_address: walletAddress || null,
+            chain: requestedChain
+          })
+        });
 
             if (!agentResponse.ok) {
               const errorText = await agentResponse.text();
@@ -585,6 +836,25 @@ async function chat(req, res) {
               decision: primaryRuntimeResult.decision,
               verification: primaryRuntimeResult.verification,
               agent_log: runtime.exportLogs()
+        try {
+          const directExecResult = await executeToolsDirectlyService(
+            routingPlan,
+            truncatedMessage,
+            {
+              walletAddress: walletAddress || null,
+              walletType: walletType || null,
+              pkpPublicKey: pkpPublicKey || null,
+              pkpTokenId: pkpTokenId || null,
+              privateKey: privateKey || null,
+              conversationId: convId,
+              agentId,
+              userId,
+              deliveryPlatform: deliveryPlatform || 'web',
+              telegramChatId: telegramChatId || null,
+              defaultEmailTo: defaultEmailTo || userEmail || null,
+              userEmail: userEmail || null,
+              chain: requestedChain,
+              apiKey: req.headers['x-api-key'] || process.env.MASTER_API_KEY || null
             }
           };
         } else {
@@ -649,7 +919,7 @@ async function chat(req, res) {
       console.log('[Chat] Simple conversation, using direct AI');
       
       const defaultSystemPrompt = systemPrompt || 
-        `You are a specialized blockchain operations assistant for BlockOps on Arbitrum Sepolia. You help with: cryptocurrency prices, wallet operations, token/NFT deployment, smart contracts, blockchain transactions, and email notifications.
+        `You are a specialized blockchain operations assistant for BlockOps with Flow EVM Testnet as the default execution chain and Arbitrum Sepolia available for legacy tools. You help with: cryptocurrency prices, wallet operations, automation, smart contracts, blockchain transactions, and email notifications.
         
         CRITICAL: If the user asks a question that requires blockchain data (prices, balances, calculations), and you don't have tools available, tell them what you would need to look up and suggest they ask directly (e.g., "fetch price of ETH", "check balance of 0x..."). 
         
@@ -661,6 +931,63 @@ async function chat(req, res) {
       
       const { context, tokenCount } = buildContext(messages, defaultSystemPrompt);
       aiResponse = await chatWithAI(context);
+    }
+
+    if (toolResults && Array.isArray(toolResults.results) && toolResults.results.length > 0) {
+      try {
+        const auditPromise = archiveToolExecutionLogs({
+          agentId,
+          userId,
+          conversationId: convId,
+          message: truncatedMessage,
+          toolResults,
+          routingPlan
+        });
+
+        let auditCompletedWithinBudget = false;
+        const auditWaitMs = getAuditWaitMs();
+
+        executionAudit = await Promise.race([
+          auditPromise.then((audit) => {
+            auditCompletedWithinBudget = true;
+            return audit;
+          }),
+          new Promise((resolve) => {
+            setTimeout(() => resolve(null), auditWaitMs);
+          })
+        ]);
+
+        if (!auditCompletedWithinBudget || !executionAudit) {
+          executionAudit = createPendingExecutionAudit(toolResults);
+
+          auditPromise
+            .then((finalAudit) => {
+              if (finalAudit?.totalCount) {
+                console.log('[Chat] Filecoin archival completed asynchronously:', {
+                  totalCount: finalAudit.totalCount,
+                  filecoinStoredCount: finalAudit.filecoinStoredCount
+                });
+              }
+            })
+            .catch((archiveError) => {
+              console.error('[Chat] Async Filecoin archival failed:', archiveError.message);
+            });
+        }
+
+        const auditText = formatExecutionAuditForChat(executionAudit);
+        if (auditText) {
+          aiResponse = `${aiResponse}\n\n${auditText}`;
+        }
+      } catch (auditError) {
+        console.error('[Chat] Failed to archive execution logs:', auditError.message);
+      }
+    }
+
+    if (toolResults) {
+      toolResults = sanitizeToolResultsForResponse(toolResults);
+      if (executionAudit) {
+        toolResults.execution_audit = executionAudit;
+      }
     }
 
     // Save AI response (if Supabase is configured)
@@ -690,6 +1017,7 @@ async function chat(req, res) {
       isNewConversation,
       messageCount: useSupabase ? messages.length + 1 : getInMemoryMessages(convId).length,
       toolResults,
+      executionAudit,
       hasTools: !!toolResults,
       memoryMode: useSupabase ? 'persistent' : 'temporary'
     });
@@ -756,22 +1084,33 @@ async function listConversations(req, res) {
  * GET /api/conversations/:conversationId/messages
  */
 async function getMessages(req, res) {
-  if (!supabase) {
-    return res.status(503).json({ 
-      error: 'Conversation service not available. Supabase not configured.' 
-    });
-  }
-
   try {
     const { conversationId } = req.params;
     const { limit = 50 } = req.query;
+    const parsedLimit = parseInt(limit, 10);
+    const finalLimit = Number.isNaN(parsedLimit) ? 50 : parsedLimit;
+
+    if (!isUuidLike(conversationId) || hasInMemoryConversation(conversationId)) {
+      const messages = getInMemoryMessages(conversationId).slice(-finalLimit);
+      return res.json({
+        messages,
+        count: messages.length,
+        memoryMode: true
+      });
+    }
+
+    if (!supabase) {
+      return res.status(503).json({ 
+        error: 'Conversation service not available. Supabase not configured.' 
+      });
+    }
 
     const { data, error } = await supabase
       .from('conversation_messages')
       .select('id, role, content, tool_calls, created_at')
       .eq('conversation_id', conversationId)
       .order('created_at', { ascending: true })
-      .limit(parseInt(limit));
+      .limit(finalLimit);
 
     if (error) {
       console.error('Error getting messages:', error);
@@ -990,8 +1329,12 @@ module.exports = {
   listConversations,
   getMessages,
   getConversation,
- deleteConversation,
+  deleteConversation,
   updateConversation,
   getStats,
-  runCleanup
+  runCleanup,
+  isUuidLike,
+  hasInMemoryConversation,
+  appendAssistantMessageToConversation,
+  getInMemoryMessages
 };

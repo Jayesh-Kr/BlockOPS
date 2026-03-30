@@ -1,5 +1,7 @@
 import { ethers } from 'ethers'
-import { supabase } from './supabase'
+import { updateCompatibleUserWallet } from './supabase'
+import { encryptPrivateKeyForStorage, normalizePrivateKey } from './lit-private-key'
+import { getChainConfig, type SupportedChainId } from './chains'
 
 /**
  * Create a new EVM wallet
@@ -61,17 +63,16 @@ export async function saveWalletToUser(
   walletAddress: string,
   privateKey: string
 ): Promise<void> {
-  const { error } = await supabase
-    .from('users')
-    .update({
-      wallet_address: walletAddress,
-      private_key: privateKey,
-    })
-    .eq('id', userId)
+  const normalizedPrivateKey = normalizePrivateKey(privateKey)
+  const litEncryptedPayload = await encryptPrivateKeyForStorage(normalizedPrivateKey)
 
-  if (error) {
-    throw new Error(`Failed to save wallet: ${error.message}`)
-  }
+  await updateCompatibleUserWallet(userId, {
+    wallet_address: walletAddress,
+    private_key: litEncryptedPayload,
+    wallet_type: 'traditional',
+    pkp_public_key: null,
+    pkp_token_id: null,
+  })
 }
 
 /**
@@ -79,51 +80,57 @@ export async function saveWalletToUser(
  * @param userId - The user ID
  */
 export async function removeWalletFromUser(userId: string): Promise<void> {
-  const { error } = await supabase
-    .from('users')
-    .update({
-      wallet_address: null,
-      private_key: null,
-    })
-    .eq('id', userId)
-
-  if (error) {
-    throw new Error(`Failed to remove wallet: ${error.message}`)
-  }
+  await updateCompatibleUserWallet(userId, {
+    wallet_address: null,
+    private_key: null,
+    wallet_type: null,
+    pkp_public_key: null,
+    pkp_token_id: null,
+  })
 }
 
 /**
- * Fetch ETH balance on Ethereum Sepolia
+ * Fetch native balance on the selected chain
  * @param address - The wallet address
- * @returns ETH balance as string
+ * @returns Native balance as string
  */
 export async function getTokenBalances(address: string): Promise<{
-  stt: string
+  native: string
+  symbol: string
 }> {
-  const ETH_RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'
+  return getTokenBalancesForChain(address, 'flow-testnet')
+}
+
+export async function getTokenBalancesForChain(
+  address: string,
+  chain: SupportedChainId
+): Promise<{
+  native: string
+  symbol: string
+}> {
+  const chainConfig = getChainConfig(chain)
+  const rpcUrl =
+    chainConfig.viemChain.rpcUrls.default.http[0] ||
+    process.env.NEXT_PUBLIC_RPC_URL ||
+    'https://testnet.evm.nodes.onflow.org'
 
   try {
-    const provider = new ethers.JsonRpcProvider(ETH_RPC_URL)
-    
-    // Get native ETH balance on Ethereum Sepolia
+    const provider = new ethers.JsonRpcProvider(rpcUrl)
     const balance = await provider.getBalance(address)
 
-    // Format balance (STT uses 18 decimals like ETH)
     const formattedBalance = ethers.formatEther(balance)
     const numericBalance = parseFloat(formattedBalance)
-
-    // Format to 2 decimal places
-    const sttBalance = numericBalance.toFixed(2)
+    const nativeBalance = numericBalance.toFixed(2)
 
     return {
-      stt: sttBalance,
+      native: nativeBalance,
+      symbol: chainConfig.symbol,
     }
   } catch (error) {
-    console.error('Error fetching STT balance:', error)
-    // Return zero balance on error
+    console.error(`Error fetching ${chainConfig.symbol} balance:`, error)
     return {
-      stt: '0.00',
+      native: '0.00',
+      symbol: chainConfig.symbol,
     }
   }
 }
-

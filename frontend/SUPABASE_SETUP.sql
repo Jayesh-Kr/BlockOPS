@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, -- Privy DID (format: did:privy:xxxxx)
   private_key TEXT,
   wallet_address TEXT,
+  wallet_type TEXT CHECK (wallet_type IN ('traditional', 'pkp')),
+  pkp_public_key TEXT,
+  pkp_token_id TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -45,6 +48,7 @@ DROP POLICY IF EXISTS "Users can delete own agents" ON agents;
 
 -- 5. Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_users_wallet_address ON users(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_users_wallet_type ON users(wallet_type);
 CREATE INDEX IF NOT EXISTS idx_agents_user_id ON agents(user_id);
 CREATE INDEX IF NOT EXISTS idx_agents_api_key ON agents(api_key);
 CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);

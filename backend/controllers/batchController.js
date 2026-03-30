@@ -22,6 +22,7 @@ const {
 } = require('../utils/helpers');
 const { fireEvent } = require('../services/webhookService');
 const { ERC20_TOKEN_ABI, ERC721_COLLECTION_ABI } = require('../config/abis');
+const { getChainFromRequest, getChainMetadata } = require('../utils/chains');
 
 // ─── Multicall3 ───────────────────────────────────────────────────────────────
 // Deployed at the same address on every EVM chain
@@ -52,6 +53,8 @@ const ERC20_ABI = [
 async function batchTransferETH(req, res) {
   try {
     const { privateKey, recipients, allowFailure = false } = req.body;
+    const chain = getChainFromRequest(req);
+    const chainMetadata = getChainMetadata(chain);
 
     const validationError = validateRequiredFields(req.body, ['privateKey', 'recipients']);
     if (validationError) return res.status(400).json(validationError);
@@ -73,8 +76,8 @@ async function batchTransferETH(req, res) {
       }
     }
 
-    const provider = getProvider();
-    const wallet = getWallet(privateKey, provider);
+    const provider = getProvider(chain);
+    const wallet = getWallet(privateKey, provider, chain);
     const multicall = new ethers.Contract(MULTICALL3_ADDRESS, MULTICALL3_ABI, wallet);
 
     // Calculate total ETH needed
@@ -91,7 +94,7 @@ async function batchTransferETH(req, res) {
       );
     }
 
-    logTransaction('Batch Transfer ETH', { count: recipients.length, totalEth: ethers.formatEther(totalWei) });
+    logTransaction('Batch Transfer Native Token', { count: recipients.length, totalEth: ethers.formatEther(totalWei), chain });
 
     // Build Multicall3 call array — each call sends ETH with empty calldata
     const calls = recipients.map(r => ({
@@ -119,8 +122,9 @@ async function batchTransferETH(req, res) {
       totalAmount: ethers.formatEther(totalWei),
       blockNumber: receipt.blockNumber,
       gasUsed: receipt.gasUsed.toString(),
-      explorerUrl: getTxExplorerUrl(receipt.hash),
-      results: batchResults
+      explorerUrl: getTxExplorerUrl(receipt.hash, chain),
+      results: batchResults,
+      ...chainMetadata
     };
 
     fireEvent(req.apiKey?.agentId || null, 'tx.confirmed', data);
@@ -145,6 +149,8 @@ async function batchTransferETH(req, res) {
 async function batchTransferERC20(req, res) {
   try {
     const { privateKey, tokenAddress, recipients } = req.body;
+    const chain = getChainFromRequest(req);
+    const chainMetadata = getChainMetadata(chain);
 
     const validationError = validateRequiredFields(req.body, ['privateKey', 'tokenAddress', 'recipients']);
     if (validationError) return res.status(400).json(validationError);
@@ -167,8 +173,8 @@ async function batchTransferERC20(req, res) {
       }
     }
 
-    const provider = getProvider();
-    const wallet = getWallet(privateKey, provider);
+    const provider = getProvider(chain);
+    const wallet = getWallet(privateKey, provider, chain);
     const token = new ethers.Contract(tokenAddress, ERC20_ABI, wallet);
 
     let decimals = 18;
@@ -193,7 +199,7 @@ async function batchTransferERC20(req, res) {
       );
     }
 
-    logTransaction('Batch Transfer ERC20', { token: symbol, count: recipients.length });
+    logTransaction('Batch Transfer ERC20', { token: symbol, count: recipients.length, chain });
 
     const results = [];
     for (const r of recipients) {
@@ -206,7 +212,7 @@ async function batchTransferERC20(req, res) {
           amount: r.amount,
           success: true,
           txHash: receipt.hash,
-          explorerUrl: getTxExplorerUrl(receipt.hash)
+          explorerUrl: getTxExplorerUrl(receipt.hash, chain)
         });
       } catch (err) {
         results.push({
@@ -229,7 +235,8 @@ async function batchTransferERC20(req, res) {
       recipientCount: recipients.length,
       succeeded,
       failed,
-      results
+      results,
+      ...chainMetadata
     };
 
     if (succeeded > 0) fireEvent(req.apiKey?.agentId || null, 'tx.confirmed', data);

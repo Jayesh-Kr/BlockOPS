@@ -18,6 +18,13 @@ const {
   deleteAgent
 } = require('../controllers/agentController');
 const apiKeyAuth = require('../middleware/apiKeyAuth');
+const {
+  discoverAgentRegistry,
+  getAgentAuditLogContent,
+  getAgentRegistry,
+  listAgentAuditLogs,
+  upsertAgentRegistry
+} = require('../controllers/agentRegistryController');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Agent CRUD
@@ -48,6 +55,46 @@ router.post('/', createAgent);
  * Response: { success, agents: [...] }
  */
 router.get('/', listAgents);
+
+/**
+ * GET /agents/registry/discover
+ * Discover active agent registry entries.
+ *
+ * Query: { chain?, capability?, mineOnly?, userId?, limit? }
+ */
+router.get('/registry/discover', discoverAgentRegistry);
+
+/**
+ * PUT /agents/:id/registry
+ * Create/update an agent registry record.
+ *
+ * Body: { userId, displayName?, description?, capabilities?, supportedChains?, metadata?, status? }
+ */
+router.put('/:id/registry', upsertAgentRegistry);
+
+/**
+ * GET /agents/:id/registry
+ * Read an agent registry record.
+ *
+ * Query: { userId? }
+ */
+router.get('/:id/registry', getAgentRegistry);
+
+/**
+ * GET /agents/:id/audit-logs
+ * List per-tool execution logs mapped to this agent/user.
+ *
+ * Query: { userId, conversationId?, tool?, success?, limit? }
+ */
+router.get('/:id/audit-logs', listAgentAuditLogs);
+
+/**
+ * GET /agents/:id/audit-logs/:logId/content
+ * Retrieve exact JSON content archived on Filecoin for a specific audit log.
+ *
+ * Query: { userId }
+ */
+router.get('/:id/audit-logs/:logId/content', getAgentAuditLogContent);
 
 /**
  * GET /agents/:id?userId=xxx

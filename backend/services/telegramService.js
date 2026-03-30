@@ -15,10 +15,16 @@
  *   TELEGRAM_BOT_TOKEN   — from BotFather
  *   TELEGRAM_WEBHOOK_URL — public HTTPS URL for prod (e.g. https://yourapi.com/telegram/webhook)
  *                          Leave empty to use long-polling during local dev.
+ *
+ * Optional for Lit-managed private keys stored in `users.private_key`:
+ *   LIT_API_BASE_URL      — defaults to https://api.dev.litprotocol.com/core/v1
+ *   LIT_USAGE_API_KEY     — required to decrypt Lit ciphertexts
+ *   LIT_PKP_ID            — optional fallback PKP id when payload pkpId is missing
  */
 
 const axios   = require('axios');
 const bcrypt  = require('bcrypt');
+const { ethers } = require('ethers');
 const supabase = require('../config/supabase');
 const { getAgentById, verifyApiKey } = require('../controllers/agentController');
 
@@ -29,6 +35,17 @@ const MASTER_KEY   = process.env.MASTER_API_KEY || '';
 
 const TG_API = BOT_TOKEN ? `https://api.telegram.org/bot${BOT_TOKEN}` : null;
 const telegramConversationSessions = new Map();
+
+const LIT_PRIVATE_KEY_PREFIX = 'lit:v1:';
+const LIT_PROVIDERS = ['lit-chipotle', 'lit-naga-test'];
+const DEFAULT_LIT_API_BASE_URL = 'https://api.dev.litprotocol.com/core/v1';
+const decryptedKeyCache = new Map();
+const DECRYPT_ACTION_CODE = `
+async function main({ pkpId, ciphertext }) {
+  const plaintext = await Lit.Actions.Decrypt({ pkpId, ciphertext });
+  return { plaintext };
+}
+`;
 
 function getConversationSessionKey(chatId, agentId) {
   return `${String(chatId)}:${String(agentId || 'generic')}`;
@@ -56,6 +73,275 @@ function clearChatConversationSessions(chatId) {
   }
 }
 
+function isRawPrivateKey(privateKey) {
+  if (!privateKey || typeof privateKey !== 'string') return false;
+  const trimmed = privateKey.trim();
+  return /^0x[a-fA-F0-9]{64}$/.test(trimmed) || /^[a-fA-F0-9]{64}$/.test(trimmed);
+}
+
+function isLitStoredPrivateKey(privateKey) {
+  return !!privateKey && typeof privateKey === 'string' && privateKey.startsWith(LIT_PRIVATE_KEY_PREFIX);
+}
+
+function normalizePrivateKey(privateKey) {
+  if (!privateKey || typeof privateKey !== 'string') return null;
+  const trimmed = privateKey.trim();
+  if (/^0x[a-fA-F0-9]{64}$/.test(trimmed)) return trimmed;
+  if (/^[a-fA-F0-9]{64}$/.test(trimmed)) return `0x${trimmed}`;
+  return null;
+}
+
+function normalizeAddress(address) {
+  if (!address || typeof address !== 'string') return null;
+  const trimmed = address.trim();
+  return ethers.isAddress(trimmed) ? trimmed : null;
+}
+
+function deriveAddressFromPrivateKey(privateKey) {
+  try {
+    if (!privateKey) return null;
+    return new ethers.Wallet(privateKey).address;
+  } catch (_) {
+    return null;
+  }
+}
+
+function deriveAddressFromPkpPublicKey(pkpPublicKey) {
+  try {
+    if (!pkpPublicKey || typeof pkpPublicKey !== 'string') return null;
+    return ethers.computeAddress(pkpPublicKey);
+  } catch (_) {
+    return null;
+  }
+}
+
+function parseLitStoredPrivateKey(storedPrivateKey) {
+  if (!isLitStoredPrivateKey(storedPrivateKey)) {
+    throw new Error('Not a Lit-managed private key payload');
+  }
+
+  const rawJson = storedPrivateKey.slice(LIT_PRIVATE_KEY_PREFIX.length);
+  let parsed;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch (_) {
+    throw new Error('Invalid Lit private key payload format');
+  }
+
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    parsed.version !== 1 ||
+    !LIT_PROVIDERS.includes(parsed.provider) ||
+    typeof parsed.pkpId !== 'string' ||
+    typeof parsed.ciphertext !== 'string'
+  ) {
+    throw new Error('Invalid Lit private key payload schema');
+  }
+
+  return parsed;
+}
+
+function parseLitResponsePayload(payload) {
+  if (typeof payload === 'string') {
+    try {
+      const parsed = JSON.parse(payload);
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+      return { value: parsed };
+    } catch (_) {
+      return { value: payload };
+    }
+  }
+
+  if (payload && typeof payload === 'object') {
+    return payload;
+  }
+
+  return { value: payload };
+}
+
+function getLitConfig() {
+  const apiBaseUrl = (process.env.LIT_API_BASE_URL || DEFAULT_LIT_API_BASE_URL).replace(/\/$/, '');
+  const apiKey = process.env.LIT_USAGE_API_KEY;
+  const defaultPkpId = process.env.LIT_PKP_ID || null;
+
+  if (!apiKey) {
+    throw new Error('Lit is not configured: missing LIT_USAGE_API_KEY');
+  }
+
+  return { apiBaseUrl, apiKey, defaultPkpId };
+}
+
+async function runLitAction({ code, jsParams }) {
+  const { apiBaseUrl, apiKey } = getLitConfig();
+
+  const response = await axios.post(
+    `${apiBaseUrl}/lit_action`,
+    {
+      code,
+      js_params: jsParams || {}
+    },
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Api-Key': apiKey
+      },
+      timeout: 15000,
+      validateStatus: () => true
+    }
+  );
+
+  if (response.status < 200 || response.status >= 300) {
+    const responseBody = typeof response.data === 'string'
+      ? response.data
+      : response.data?.logs || JSON.stringify(response.data);
+    throw new Error(`Lit action request failed (${response.status}): ${responseBody}`);
+  }
+
+  const body = response.data;
+
+  if (!body || typeof body !== 'object') {
+    throw new Error('Lit action returned an invalid response');
+  }
+
+  if (body.has_error) {
+    throw new Error(body.logs || 'Lit action execution failed');
+  }
+
+  return parseLitResponsePayload(body.response);
+}
+
+async function decryptSecretWithLit(ciphertext, pkpId) {
+  const { defaultPkpId } = getLitConfig();
+  const finalPkpId = pkpId || defaultPkpId;
+
+  if (!finalPkpId) {
+    throw new Error('Lit decrypt requires pkpId (missing payload pkpId and LIT_PKP_ID)');
+  }
+
+  const payload = await runLitAction({
+    code: DECRYPT_ACTION_CODE,
+    jsParams: {
+      pkpId: finalPkpId,
+      ciphertext
+    }
+  });
+
+  const plaintext = typeof payload?.plaintext === 'string' ? payload.plaintext : null;
+  if (!plaintext) {
+    throw new Error('Lit decryption did not return plaintext');
+  }
+
+  return plaintext;
+}
+
+async function decryptStoredPrivateKey(storedPrivateKey) {
+  if (!storedPrivateKey || typeof storedPrivateKey !== 'string') return null;
+
+  if (isRawPrivateKey(storedPrivateKey)) {
+    return normalizePrivateKey(storedPrivateKey);
+  }
+
+  if (!isLitStoredPrivateKey(storedPrivateKey)) {
+    return null;
+  }
+
+  if (decryptedKeyCache.has(storedPrivateKey)) {
+    return decryptedKeyCache.get(storedPrivateKey) || null;
+  }
+
+  const litPayload = parseLitStoredPrivateKey(storedPrivateKey);
+  const plaintext = await decryptSecretWithLit(litPayload.ciphertext, litPayload.pkpId);
+
+  if (!isRawPrivateKey(plaintext)) {
+    throw new Error('Lit decrypt returned an invalid private key');
+  }
+
+  const normalizedPrivateKey = normalizePrivateKey(plaintext);
+  if (!normalizedPrivateKey) {
+    throw new Error('Unable to normalize decrypted private key');
+  }
+
+  decryptedKeyCache.set(storedPrivateKey, normalizedPrivateKey);
+  return normalizedPrivateKey;
+}
+
+async function getTelegramWalletContext(preferredWalletAddress = null, linkedUserId = null) {
+  const preferredAddress = normalizeAddress(preferredWalletAddress);
+  if (!supabase || !linkedUserId) {
+    return {
+      walletAddress: preferredAddress,
+      walletType: null,
+      privateKey: null,
+      pkpPublicKey: null,
+      pkpTokenId: null
+    };
+  }
+
+  const { data: userRecord, error } = await supabase
+    .from('users')
+    .select('private_key, wallet_address, wallet_type, pkp_public_key, pkp_token_id')
+    .eq('id', String(linkedUserId))
+    .maybeSingle();
+
+  if (error) {
+    console.error('[Telegram] Failed to load linked user signing context:', error.message || error);
+    return {
+      walletAddress: preferredAddress,
+      walletType: null,
+      privateKey: null,
+      pkpPublicKey: null,
+      pkpTokenId: null
+    };
+  }
+
+  const walletType =
+    userRecord?.wallet_type === 'pkp'
+      ? 'pkp'
+      : userRecord?.wallet_type === 'traditional'
+        ? 'traditional'
+        : null;
+  const pkpPublicKey =
+    walletType === 'pkp' && typeof userRecord?.pkp_public_key === 'string'
+      ? userRecord.pkp_public_key
+      : null;
+  const pkpTokenId =
+    walletType === 'pkp' && typeof userRecord?.pkp_token_id === 'string'
+      ? userRecord.pkp_token_id
+      : null;
+  let privateKey = null;
+  const storedPrivateKey = typeof userRecord?.private_key === 'string' ? userRecord.private_key : null;
+  if (walletType !== 'pkp' && storedPrivateKey) {
+    try {
+      privateKey = await decryptStoredPrivateKey(storedPrivateKey);
+    } catch (err) {
+      console.warn('[Telegram] Failed to resolve linked user private key for Telegram chat:', err.message || err);
+    }
+  }
+
+  const userWalletAddress = normalizeAddress(userRecord?.wallet_address || null);
+  const derivedAddress = deriveAddressFromPrivateKey(privateKey);
+  const pkpDerivedAddress = normalizeAddress(deriveAddressFromPkpPublicKey(pkpPublicKey));
+
+  let walletAddress = userWalletAddress || pkpDerivedAddress || derivedAddress || preferredAddress || null;
+
+  // Never pass a signer key when it does not map to the active wallet context.
+  if (privateKey && walletAddress && derivedAddress && walletAddress.toLowerCase() !== derivedAddress.toLowerCase()) {
+    console.warn('[Telegram] Linked user wallet differs from decrypted private key; privateKey context disabled for this chat');
+    privateKey = null;
+  }
+
+  return {
+    walletAddress,
+    walletType,
+    privateKey,
+    pkpPublicKey,
+    pkpTokenId
+  };
+}
+
 // Escape characters that break Telegram's legacy Markdown parser
 function mdEscape(str) {
   if (!str) return '';
@@ -76,15 +362,40 @@ async function tgRequest(method, body = {}, timeout = 10000) {
  */
 async function sendMessage(chatId, text, options = {}) {
   if (!TG_API) return;
+
+  const { parse_mode, ...restOptions } = options || {};
+  const payload = {
+    chat_id: chatId,
+    text: String(text ?? ''),
+    parse_mode: parse_mode || 'Markdown',
+    ...restOptions
+  };
+
   try {
-    await tgRequest('sendMessage', {
-      chat_id: chatId,
-      text,
-      parse_mode: 'Markdown',
-      ...options
-    });
+    await tgRequest('sendMessage', payload);
   } catch (err) {
-    console.error(`[Telegram] sendMessage to ${chatId} failed:`, err.response?.data || err.message || err);
+    const tgError = err.response?.data;
+    const description = String(tgError?.description || err.message || '');
+    const isMarkdownParseError =
+      tgError?.error_code === 400 &&
+      description.toLowerCase().includes("can't parse entities");
+
+    // If Telegram rejects Markdown entities from AI output, retry once as plain text.
+    if (isMarkdownParseError) {
+      try {
+        await tgRequest('sendMessage', {
+          chat_id: chatId,
+          text: String(text ?? ''),
+          ...restOptions
+        });
+        console.warn(`[Telegram] sendMessage markdown parse failed for ${chatId}; resent as plain text`);
+        return;
+      } catch (retryErr) {
+        console.error(`[Telegram] sendMessage plain-text retry to ${chatId} failed:`, retryErr.response?.data || retryErr.message || retryErr);
+      }
+    }
+
+    console.error(`[Telegram] sendMessage to ${chatId} failed:`, tgError || err.message || err);
   }
 }
 
@@ -425,7 +736,8 @@ async function handleFreeText(chatId, text, user) {
       agentConfig = {
         systemPrompt: agent.system_prompt,
         enabledTools: agent.enabled_tools,
-        walletAddress: agent.wallet_address
+        walletAddress: agent.wallet_address,
+        userId: agent.user_id
       };
     } else {
       // Agent deleted or invalid — fall back to generic
@@ -441,6 +753,10 @@ async function handleFreeText(chatId, text, user) {
 
   const userId = `tg-user-${chatId}`;
   const conversationId = getSessionConversationId(chatId, agentId);
+  const telegramWalletContext = await getTelegramWalletContext(
+    agentConfig?.walletAddress || null,
+    agentConfig?.userId || null
+  );
 
   // Send "typing…" indicator
   await tgRequest('sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
@@ -451,9 +767,15 @@ async function handleFreeText(chatId, text, user) {
       userId,
       message: text,
       conversationId,
+      deliveryPlatform: 'telegram',
+      telegramChatId: String(chatId),
       systemPrompt: agentConfig?.systemPrompt,       // null = use default
       enabledTools: agentConfig?.enabledTools,       // null = enable all
-      walletAddress: agentConfig?.walletAddress      // optional pre-config
+      walletAddress: telegramWalletContext.walletAddress, // linked user wallet context (fallback: linked agent wallet)
+      walletType: telegramWalletContext.walletType,
+      pkpPublicKey: telegramWalletContext.pkpPublicKey,
+      pkpTokenId: telegramWalletContext.pkpTokenId,
+      privateKey: telegramWalletContext.privateKey        // linked website user's private key when available
     }, {
       headers: { 'Content-Type': 'application/json', 'x-api-key': MASTER_KEY },
       timeout: 60000
