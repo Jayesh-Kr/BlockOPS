@@ -34,6 +34,61 @@ function generateApiKey() {
   return `bops_${randomPart}`;
 }
 
+function extractOnChainIdFromReceipt(receipt, identityAbi, identityAddress) {
+  const logs = receipt?.logs || [];
+  const identityAddressLower = identityAddress ? identityAddress.toLowerCase() : null;
+
+  // First prefer pre-parsed logs returned by ethers for known ABI events.
+  for (const log of logs) {
+    if (log?.fragment?.name === 'AgentRegistered' && log?.args?.agentId != null) {
+      return log.args.agentId.toString();
+    }
+  }
+
+  // Fall back to manual parsing against the identity ABI.
+  const identityInterface = new ethers.Interface(identityAbi);
+  for (const log of logs) {
+    try {
+      const parsedLog = identityInterface.parseLog(log);
+      if (parsedLog?.name === 'AgentRegistered' && parsedLog?.args?.agentId != null) {
+        return parsedLog.args.agentId.toString();
+      }
+    } catch (e) {
+      // Ignore unrelated logs.
+    }
+  }
+
+  // Final fallback: parse ERC-721 mint Transfer(from=0x0) to recover tokenId.
+  const transferInterface = new ethers.Interface([
+    'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)'
+  ]);
+
+  for (const log of logs) {
+    if (identityAddressLower && log?.address?.toLowerCase() !== identityAddressLower) {
+      continue;
+    }
+
+    try {
+      const parsedTransfer = transferInterface.parseLog(log);
+      if (parsedTransfer?.name !== 'Transfer') {
+        continue;
+      }
+
+      const from = parsedTransfer?.args?.from;
+      if (from && from.toLowerCase() === ethers.ZeroAddress.toLowerCase()) {
+        const tokenId = parsedTransfer?.args?.tokenId;
+        if (tokenId != null) {
+          return tokenId.toString();
+        }
+      }
+    } catch (e) {
+      // Ignore unrelated logs.
+    }
+  }
+
+  return null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /agents — Create a new agent
 // ─────────────────────────────────────────────────────────────────────────────
@@ -500,8 +555,8 @@ async function registerAgentOnChain(req, res) {
       });
     }
 
-    // Initialize blockchain provider and wallet
-    const provider = getProvider();
+    // ERC-8004 registries are deployed on Arbitrum Sepolia.
+    const provider = getProvider('arbitrum-sepolia');
     let wallet = null;
 
     try {
@@ -528,9 +583,18 @@ async function registerAgentOnChain(req, res) {
       return res.status(500).json({ success: false, error: 'Identity Registry address not configured' });
     }
 
+    const identityCode = await provider.getCode(identityAddr);
+    if (!identityCode || identityCode === '0x') {
+      return res.status(500).json({
+        success: false,
+        error: 'Identity Registry contract is not deployed on Arbitrum Sepolia at the configured IDENTITY_REGISTRY_ADDRESS. Fix backend/.env and retry.',
+      });
+    }
+
     const IDENTITY_ABI = [
       "function registerAgent(address owner, string memory agentURI) public returns (uint256)",
-      "event AgentRegistered(uint256 indexed agentId, address indexed owner, string agentURI)"
+      "event AgentRegistered(uint256 indexed agentId, address indexed owner, string agentURI)",
+      "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)"
     ];
 
     console.log(`[Agent] Registering ${agent.name} (${id}) on-chain...`);
@@ -539,26 +603,20 @@ async function registerAgentOnChain(req, res) {
     const agentURI = `https://blockops.in/api/v1/agents/${id}/manifest`;
     const tx = await identityContract.registerAgent(wallet.address, agentURI);
     const receipt = await tx.wait();
-    
-    // Extract agentId from event
-    // Find the AgentRegistered event in logs
-    const iface = new ethers.Interface(IDENTITY_ABI);
-    let onChainId = null;
-    
-    for (const log of receipt.logs) {
-      try {
-        const parsedLog = iface.parseLog(log);
-        if (parsedLog && parsedLog.name === 'AgentRegistered') {
-          onChainId = parsedLog.args.agentId.toString();
-          break;
-        }
-      } catch (e) {
-        // Not our event
-      }
-    }
+
+    const onChainId = extractOnChainIdFromReceipt(receipt, IDENTITY_ABI, identityAddr);
 
     if (!onChainId) {
-      throw new Error('Failed to extract on-chain agent ID from transaction receipt');
+      console.error('[Agent] Failed to extract on-chain agent ID from receipt logs', {
+        txHash: receipt.hash,
+        logCount: receipt.logs?.length || 0,
+      });
+
+      return res.status(500).json({
+        success: false,
+        error: 'Agent transaction was mined, but backend could not decode the agent ID from logs. Please retry once; if it persists, use the transaction hash for recovery.',
+        transactionHash: receipt.hash,
+      });
     }
 
     // Save to Supabase
