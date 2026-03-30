@@ -179,6 +179,30 @@ const AVAILABLE_TOOLS = {
     parameters: ['privateKey', 'toAddress', 'amount', 'cronExpression', 'tokenAddress (optional)', 'label (optional)', 'chain (optional, defaults to Flow EVM Testnet)'],
     examples: ['Pay a contributor 10 FLOW every month', 'Schedule a monthly grant payout to 0x...', 'Send 100 USDC on the first day of every month']
   },
+  create_payroll_plan: {
+    name: 'create_payroll_plan',
+    description: 'Create a recurring payroll plan on Flow by scheduling salary or contributor payments to the same recipient on a fixed cadence.',
+    parameters: ['privateKey', 'toAddress', 'amount', 'cronExpression', 'tokenAddress (optional)', 'label (optional)', 'chain (optional, defaults to Flow EVM Testnet)'],
+    examples: ['Pay a contributor 10 FLOW every month', 'Create a biweekly payroll plan for 0x...', 'Schedule salary payments on Flow']
+  },
+  create_grant_payout: {
+    name: 'create_grant_payout',
+    description: 'Create a recurring grant or stipend payout on Flow for community programs, creators, or ecosystem recipients.',
+    parameters: ['privateKey', 'toAddress', 'amount', 'cronExpression', 'tokenAddress (optional)', 'label (optional)', 'chain (optional, defaults to Flow EVM Testnet)'],
+    examples: ['Send a monthly grant payout of 25 FLOW', 'Create a stipend plan for 0x...', 'Schedule a recurring ecosystem grant on Flow']
+  },
+  get_flow_network_overview: {
+    name: 'get_flow_network_overview',
+    description: 'Show the Flow EVM Testnet setup used by BlockOPs, including chain id, explorer, faucet, sponsored gas status, and recommended Flow automation tools.',
+    parameters: [],
+    examples: ['How is Flow configured in this app?', 'Show me the Flow setup', 'Give me the Flow testnet overview']
+  },
+  get_flow_wallet_readiness: {
+    name: 'get_flow_wallet_readiness',
+    description: 'Check whether a wallet is ready for Flow automation by inspecting its Flow balance and returning faucet/explorer guidance.',
+    parameters: ['wallet_address (optional if user is asking about their own wallet)'],
+    examples: ['Is my Flow wallet ready?', 'Check whether 0x123... is funded on Flow', 'Do I need Flow faucet funds?']
+  },
   schedule_reminder: {
     name: 'schedule_reminder',
     description: 'Schedule a one-time or recurring reminder that sends a balance update, wallet value snapshot, or token price back to the same chat.',
@@ -527,6 +551,24 @@ function detectToolsWithRegex(message) {
       depends_on: [] 
     });
   }
+
+  if (/\b(flow setup|flow overview|flow config|flow configuration|flow faucet|flowscan|sponsored gas|flow network)\b/i.test(message)) {
+    tools.push({
+      tool: 'get_flow_network_overview',
+      reason: 'User asked for Flow network setup or onboarding details',
+      parameters: {},
+      depends_on: []
+    });
+  }
+
+  if (/\b(flow wallet ready|wallet readiness|is my flow wallet ready|funded on flow|need flow faucet|flow wallet)\b/i.test(message)) {
+    tools.push({
+      tool: 'get_flow_wallet_readiness',
+      reason: 'User asked whether their wallet is ready for Flow',
+      parameters: {},
+      depends_on: []
+    });
+  }
   
   if (hasTransferIntent && !(hasEmailIntent && !/\b(transfer|pay|move)\b/i.test(message))) {
     tools.push({ 
@@ -562,6 +604,24 @@ function detectToolsWithRegex(message) {
       reason: 'User wants to deploy NFT',
       parameters: {},
       depends_on: [] 
+    });
+  }
+
+  if (/\b(payroll|salary|contributor payout|employee payout|biweekly pay|monthly pay)\b/i.test(message)) {
+    tools.push({
+      tool: 'create_payroll_plan',
+      reason: 'User wants a recurring payroll-style Flow payout',
+      parameters: {},
+      depends_on: []
+    });
+  }
+
+  if (/\b(grant payout|grant plan|stipend|ecosystem grant|community grant)\b/i.test(message)) {
+    tools.push({
+      tool: 'create_grant_payout',
+      reason: 'User wants a recurring grant payout on Flow',
+      parameters: {},
+      depends_on: []
     });
   }
 

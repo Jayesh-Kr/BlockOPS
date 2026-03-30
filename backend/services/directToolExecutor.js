@@ -1,6 +1,9 @@
+const { ethers } = require('ethers');
 const axios = require('axios');
-const { DEFAULT_CHAIN, PORT } = require('../config/constants');
+const { DEFAULT_CHAIN, PORT, getChainConfig } = require('../config/constants');
 const { signAndBroadcastTransactionWithPkp } = require('./litPkpService');
+const { getProvider } = require('../utils/blockchain');
+const { getAddressExplorerUrl } = require('../utils/helpers');
 const {
   buildUnsupportedToolError,
   isToolSupportedOnChain,
@@ -42,6 +45,10 @@ const TOOL_ENDPOINTS = {
   schedule_transfer:   { method: 'POST', path: '/schedule/transfer' },
   create_savings_plan: { method: 'POST', path: '/schedule/transfer' },
   schedule_payout:     { method: 'POST', path: '/schedule/transfer' },
+  create_payroll_plan: { method: 'POST', path: '/schedule/transfer' },
+  create_grant_payout: { method: 'POST', path: '/schedule/transfer' },
+  get_flow_network_overview: { method: 'LOCAL' },
+  get_flow_wallet_readiness: { method: 'LOCAL' },
   schedule_reminder:   { method: 'POST', path: '/reminders' },
   list_reminders:      { method: 'GET',  path: '/reminders' },
   cancel_reminder:     { method: 'DELETE', path: '/reminders/{id}' },
@@ -88,6 +95,45 @@ function extractExplicitChainFromText(text = '') {
 function extractPrivateKeyFromText(text = '') {
   const match = text.match(/0x[a-fA-F0-9]{64}/);
   return match ? match[0] : null;
+}
+
+function getFlowFaucetUrl() {
+  return (
+    process.env.FLOW_TESTNET_FAUCET_URL ||
+    process.env.NEXT_PUBLIC_FLOW_TESTNET_FAUCET_URL ||
+    'https://testnet-faucet.onflow.org/fund-account'
+  );
+}
+
+function buildFlowNetworkOverviewPayload() {
+  const chain = 'flow-testnet';
+  const config = getChainConfig(chain);
+
+  return {
+    success: true,
+    chain: config.id,
+    chainId: config.chainId,
+    network: config.name,
+    nativeCurrency: config.nativeCurrency.symbol,
+    rpcUrl: config.rpcUrl,
+    sponsoredRpcEnabled: Boolean(config.sponsoredRpcUrl),
+    sponsoredRpcUrl: config.sponsoredRpcUrl,
+    explorerBaseUrl: config.explorerBaseUrl,
+    faucetUrl: getFlowFaucetUrl(),
+    automationTools: [
+      'create_savings_plan',
+      'schedule_payout',
+      'create_payroll_plan',
+      'create_grant_payout',
+      'schedule_reminder'
+    ],
+    walletModes: ['Privy embedded wallet', 'Traditional private key', 'Lit PKP'],
+    notes: [
+      'Flow EVM Testnet is the default demo chain for BlockOPs.',
+      'Sponsored gas can be enabled via FLOW_EVM_TESTNET_SPONSORED_RPC_URL.',
+      'Use Flowscan for transaction and wallet verification.'
+    ]
+  };
 }
 
 function extractEmailFromText(text = '') {
@@ -422,6 +468,16 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       if (!address) missing.push('address');
       break;
     }
+    case 'get_flow_network_overview': {
+      mapped = { chain: 'flow-testnet' };
+      break;
+    }
+    case 'get_flow_wallet_readiness': {
+      const address = params.address || params.wallet_address || params.walletAddress || contextualAddress;
+      mapped = { address, chain: 'flow-testnet' };
+      if (!address) missing.push('address');
+      break;
+    }
     case 'transfer': {
       const privateKey = contextualPrivateKey;
       const toAddress =
@@ -701,7 +757,9 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
     }
     case 'schedule_transfer':
     case 'create_savings_plan':
-    case 'schedule_payout': {
+    case 'schedule_payout':
+    case 'create_payroll_plan':
+    case 'create_grant_payout': {
       const privateKey      = contextualPrivateKey;
       const toAddress       = params.toAddress  || params.to_address || params.to;
       const amount          = params.amount;
@@ -718,6 +776,12 @@ function mapToolParams(tool, params = {}, fallbackMessage, executionContext = {}
       }
       if (tool === 'schedule_payout' && !mapped.label) {
         mapped.label = 'Flow scheduled payout';
+      }
+      if (tool === 'create_payroll_plan' && !mapped.label) {
+        mapped.label = 'Flow payroll plan';
+      }
+      if (tool === 'create_grant_payout' && !mapped.label) {
+        mapped.label = 'Flow grant payout';
       }
       if (!privateKey)     missing.push('privateKey');
       if (!toAddress)      missing.push('toAddress');
@@ -1038,6 +1102,46 @@ async function executeReminderToolLocally(tool, mapped) {
   throw new Error(`Unsupported local reminder tool: ${tool}`);
 }
 
+async function executeFlowToolLocally(tool, mapped) {
+  if (tool === 'get_flow_network_overview') {
+    return buildFlowNetworkOverviewPayload();
+  }
+
+  if (tool === 'get_flow_wallet_readiness') {
+    const address = mapped.address || mapped.wallet_address || mapped.walletAddress;
+    const provider = getProvider('flow-testnet');
+    const balanceWei = await provider.getBalance(address);
+    const balance = ethers.formatEther(balanceWei);
+    const funded = balanceWei > 0n;
+    const overview = buildFlowNetworkOverviewPayload();
+
+    return {
+      success: true,
+      address,
+      balance,
+      balanceWei: balanceWei.toString(),
+      readiness: funded ? 'ready' : 'needs_funding',
+      funded,
+      chain: 'flow-testnet',
+      chainId: overview.chainId,
+      network: overview.network,
+      nativeCurrency: overview.nativeCurrency,
+      faucetUrl: overview.faucetUrl,
+      explorerBaseUrl: overview.explorerBaseUrl,
+      explorerUrl: getAddressExplorerUrl(address, 'flow-testnet'),
+      sponsoredRpcEnabled: overview.sponsoredRpcEnabled,
+      nextAction: funded
+        ? 'Wallet is funded and ready for Flow automation tools.'
+        : 'Wallet has no FLOW yet. Fund it from the Flow testnet faucet before running transfers or schedules.',
+      recommendedTools: funded
+        ? ['create_savings_plan', 'schedule_payout', 'create_payroll_plan', 'create_grant_payout']
+        : ['get_flow_network_overview']
+    };
+  }
+
+  throw new Error(`Unsupported local Flow tool: ${tool}`);
+}
+
 async function executeToolStep(step, fallbackMessage, executionContext = {}) {
   const { tool, parameters } = step;
   const mapping = mapToolParams(tool, parameters, fallbackMessage, executionContext);
@@ -1059,7 +1163,9 @@ async function executeToolStep(step, fallbackMessage, executionContext = {}) {
     'bridge_withdraw',
     'schedule_transfer',
     'create_savings_plan',
-    'schedule_payout'
+    'schedule_payout',
+    'create_payroll_plan',
+    'create_grant_payout'
   ]).has(tool);
 
   // For transfer, support wallet-address-based prepare flow (Lit/MetaMask signing).
@@ -1077,6 +1183,10 @@ async function executeToolStep(step, fallbackMessage, executionContext = {}) {
     'schedule_reminder',
     'list_reminders',
     'cancel_reminder'
+  ]).has(tool);
+  const isFlowLocalTool = new Set([
+    'get_flow_network_overview',
+    'get_flow_wallet_readiness'
   ]).has(tool);
 
   if (!isToolSupportedOnChain(tool, selectedChain)) {
@@ -1119,6 +1229,25 @@ async function executeToolStep(step, fallbackMessage, executionContext = {}) {
   if (isReminderTool) {
     try {
       const payload = await executeReminderToolLocally(tool, mapping.mapped);
+      return {
+        tool_call: { tool, parameters: mapping.mapped },
+        result: { success: true, tool, result: payload }
+      };
+    } catch (error) {
+      return {
+        tool_call: { tool, parameters: mapping.mapped },
+        result: {
+          success: false,
+          tool,
+          error: error.status ? `HTTP ${error.status}: ${error.message}` : error.message
+        }
+      };
+    }
+  }
+
+  if (isFlowLocalTool) {
+    try {
+      const payload = await executeFlowToolLocally(tool, mapping.mapped);
       return {
         tool_call: { tool, parameters: mapping.mapped },
         result: { success: true, tool, result: payload }
@@ -1582,6 +1711,16 @@ function formatToolResponse(toolResults) {
         const symbol = payload.nativeCurrency || 'ETH';
         return `Balance for ${payload.address}: ${payload.balance} ${symbol}.`;
       }
+      case 'get_flow_network_overview': {
+        const sponsorship = payload.sponsoredRpcEnabled ? 'enabled' : 'not configured';
+        return `Flow is ready in BlockOPs on ${payload.network} (chain ${payload.chainId}). Faucet: ${payload.faucetUrl}. Sponsored gas is ${sponsorship}.`;
+      }
+      case 'get_flow_wallet_readiness': {
+        const symbol = payload.nativeCurrency || 'FLOW';
+        return payload.funded
+          ? `Flow wallet ${payload.address} is ready with ${payload.balance} ${symbol}.`
+          : `Flow wallet ${payload.address} needs funding. Current balance: ${payload.balance} ${symbol}. Faucet: ${payload.faucetUrl}.`;
+      }
       case 'transfer': {
         if (payload.requiresMetaMask || payload.requiresSigning || payload.prepared) {
           const details = payload.details || {};
@@ -1700,6 +1839,12 @@ function formatToolResponse(toolResults) {
       }
       case 'schedule_payout': {
         return `Scheduled payout created (ID: ${payload.id}) on ${payload.network || payload.chain || 'the selected chain'}. ${payload.note || ''}`;
+      }
+      case 'create_payroll_plan': {
+        return `Payroll plan created (ID: ${payload.id}) on ${payload.network || payload.chain || 'the selected chain'}. ${payload.note || ''}`;
+      }
+      case 'create_grant_payout': {
+        return `Grant payout plan created (ID: ${payload.id}) on ${payload.network || payload.chain || 'the selected chain'}. ${payload.note || ''}`;
       }
       case 'schedule_reminder': {
         return `Scheduled reminder created (ID: ${payload.id}). ${payload.note || ''}`;

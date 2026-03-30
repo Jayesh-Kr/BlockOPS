@@ -22,7 +22,11 @@ const FLOW_SUPPORTED_TOOLS = new Set([
   'list_schedules',
   'cancel_schedule',
   'create_savings_plan',
-  'schedule_payout'
+  'schedule_payout',
+  'create_payroll_plan',
+  'create_grant_payout',
+  'get_flow_network_overview',
+  'get_flow_wallet_readiness'
 ]);
 
 const ARBITRUM_ONLY_TOOLS = new Set([

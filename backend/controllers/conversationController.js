@@ -691,7 +691,17 @@ async function chat(req, res) {
           (walletType === 'pkp' &&
             routingPlan.execution_plan?.steps?.some(step => step.tool === 'transfer')) ||
           routingPlan.execution_plan?.steps?.some(step =>
-            ['schedule_reminder', 'list_reminders', 'cancel_reminder', 'create_savings_plan', 'schedule_payout'].includes(step.tool)
+            [
+              'schedule_reminder',
+              'list_reminders',
+              'cancel_reminder',
+              'create_savings_plan',
+              'schedule_payout',
+              'create_payroll_plan',
+              'create_grant_payout',
+              'get_flow_network_overview',
+              'get_flow_wallet_readiness'
+            ].includes(step.tool)
           );
 
         if (preferDirectExecution) {

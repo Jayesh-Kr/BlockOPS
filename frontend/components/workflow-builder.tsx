@@ -75,6 +75,12 @@ const toolTypes = [
   "approve_token",
   "revoke_approval",
   "send_email",
+  "create_savings_plan",
+  "schedule_payout",
+  "create_payroll_plan",
+  "create_grant_payout",
+  "get_flow_network_overview",
+  "get_flow_wallet_readiness",
 ]
 
 const nodeTypes: NodeTypes = {
@@ -95,6 +101,12 @@ const nodeTypes: NodeTypes = {
   approve_token: ToolNode,
   revoke_approval: ToolNode,
   send_email: ToolNode,
+  create_savings_plan: ToolNode,
+  schedule_payout: ToolNode,
+  create_payroll_plan: ToolNode,
+  create_grant_payout: ToolNode,
+  get_flow_network_overview: ToolNode,
+  get_flow_wallet_readiness: ToolNode,
 }
 
 const edgeTypes: EdgeTypes = {

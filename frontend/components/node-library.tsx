@@ -14,6 +14,11 @@ import {
   CheckCircle,
   XCircle,
   Mail,
+  PiggyBank,
+  HandCoins,
+  Landmark,
+  Network,
+  ShieldCheck,
 } from "lucide-react"
 
 const toolTypes = [
@@ -88,6 +93,42 @@ const toolTypes = [
     label: "Send Email",
     description: "Send email notifications",
     icon: Mail,
+  },
+  {
+    type: "create_savings_plan",
+    label: "Flow Savings Plan",
+    description: "Recurring savings on Flow",
+    icon: PiggyBank,
+  },
+  {
+    type: "schedule_payout",
+    label: "Flow Scheduled Payout",
+    description: "Recurring payout on Flow",
+    icon: HandCoins,
+  },
+  {
+    type: "create_payroll_plan",
+    label: "Flow Payroll Plan",
+    description: "Recurring contributor payroll",
+    icon: HandCoins,
+  },
+  {
+    type: "create_grant_payout",
+    label: "Flow Grant Payout",
+    description: "Recurring grant or stipend",
+    icon: Landmark,
+  },
+  {
+    type: "get_flow_network_overview",
+    label: "Flow Network Overview",
+    description: "Flow config, faucet, and explorer",
+    icon: Network,
+  },
+  {
+    type: "get_flow_wallet_readiness",
+    label: "Flow Wallet Readiness",
+    description: "Check if a wallet is funded on Flow",
+    icon: ShieldCheck,
   },
 ]
 

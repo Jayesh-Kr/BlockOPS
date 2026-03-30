@@ -19,6 +19,10 @@ import {
   CheckCircle,
   XCircle,
   Mail,
+  HandCoins,
+  Landmark,
+  Network,
+  ShieldCheck,
 } from "lucide-react"
 import type { NodeData } from "@/lib/types"
 
@@ -39,6 +43,12 @@ const toolIcons: Record<string, React.ReactNode> = {
   approve_token: <CheckCircle className="h-4 w-4" />,
   revoke_approval: <XCircle className="h-4 w-4" />,
   send_email: <Mail className="h-4 w-4" />,
+  create_savings_plan: <PiggyBank className="h-4 w-4" />,
+  schedule_payout: <HandCoins className="h-4 w-4" />,
+  create_payroll_plan: <HandCoins className="h-4 w-4" />,
+  create_grant_payout: <Landmark className="h-4 w-4" />,
+  get_flow_network_overview: <Network className="h-4 w-4" />,
+  get_flow_wallet_readiness: <ShieldCheck className="h-4 w-4" />,
 }
 
 const toolColors: Record<string, { border: string; bg: string; text: string }> = {
@@ -58,6 +68,12 @@ const toolColors: Record<string, { border: string; bg: string; text: string }> =
   approve_token: { border: "border-foreground/50", bg: "bg-foreground/10", text: "text-foreground" },
   revoke_approval: { border: "border-foreground/60", bg: "bg-foreground/15", text: "text-foreground" },
   send_email: { border: "border-foreground/40", bg: "bg-foreground/5", text: "text-foreground" },
+  create_savings_plan: { border: "border-foreground/50", bg: "bg-foreground/10", text: "text-foreground" },
+  schedule_payout: { border: "border-foreground/60", bg: "bg-foreground/15", text: "text-foreground" },
+  create_payroll_plan: { border: "border-foreground/40", bg: "bg-foreground/5", text: "text-foreground" },
+  create_grant_payout: { border: "border-foreground/50", bg: "bg-foreground/10", text: "text-foreground" },
+  get_flow_network_overview: { border: "border-foreground/60", bg: "bg-foreground/15", text: "text-foreground" },
+  get_flow_wallet_readiness: { border: "border-foreground/40", bg: "bg-foreground/5", text: "text-foreground" },
 }
 
 export const ToolNode = memo(({ data, type, isConnectable }: NodeProps<NodeData>) => {
@@ -83,4 +99,3 @@ export const ToolNode = memo(({ data, type, isConnectable }: NodeProps<NodeData>
 })
 
 ToolNode.displayName = "ToolNode"
-

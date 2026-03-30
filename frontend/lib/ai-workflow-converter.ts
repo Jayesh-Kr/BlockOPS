@@ -12,6 +12,12 @@ const toolTypeMap: Record<string, string> = {
   airdrop: 'airdrop',
   fetch_token_price: 'fetch_price',
   deposit_with_yield_prediction: 'deposit_yield',
+  create_savings_plan: 'create_savings_plan',
+  schedule_payout: 'schedule_payout',
+  create_payroll_plan: 'create_payroll_plan',
+  create_grant_payout: 'create_grant_payout',
+  get_flow_network_overview: 'get_flow_network_overview',
+  get_flow_wallet_readiness: 'get_flow_wallet_readiness',
 }
 
 interface AITool {
@@ -55,6 +61,12 @@ export function aiResponseToWorkflow(aiResponse: AIResponse): { nodes: Node[]; e
       'airdrop',
       'fetch_price',
       'deposit_yield',
+      'create_savings_plan',
+      'schedule_payout',
+      'create_payroll_plan',
+      'create_grant_payout',
+      'get_flow_network_overview',
+      'get_flow_wallet_readiness',
     ]
     
     if (!validToolTypes.includes(ourToolType)) {
@@ -126,4 +138,3 @@ export function isValidAIWorkflowResponse(data: any): data is AIResponse {
     )
   )
 }
-
