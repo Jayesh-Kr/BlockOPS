@@ -25,6 +25,7 @@ import {
   ShieldCheck,
 } from "lucide-react"
 import type { NodeData } from "@/lib/types"
+import { getToolSupportMeta } from "@/lib/tool-support"
 
 const toolIcons: Record<string, React.ReactNode> = {
   transfer: <ArrowRightLeft className="h-4 w-4" />,
@@ -79,16 +80,24 @@ const toolColors: Record<string, { border: string; bg: string; text: string }> =
 export const ToolNode = memo(({ data, type, isConnectable }: NodeProps<NodeData>) => {
   const colors = toolColors[type || ""] || { border: "border-foreground/30", bg: "bg-foreground/5", text: "text-foreground" }
   const icon = toolIcons[type || ""] || null
+  const supportMeta = getToolSupportMeta(type)
 
   return (
     <div className={`px-4 py-2 shadow-md rounded-md bg-background border-2 ${colors.border} min-w-[150px]`}>
-      <div className="flex items-center">
+      <div className="flex items-start">
         <div className={`rounded-full w-8 h-8 flex items-center justify-center ${colors.bg} ${colors.text}`}>
           {icon}
         </div>
-        <div className="ml-2">
+        <div className="ml-2 flex-1 min-w-0">
           <div className="text-sm font-bold">{data.label || type}</div>
           <div className="text-xs text-muted-foreground">{data.description || "Tool"}</div>
+          <div className="mt-1">
+            <span
+              className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${supportMeta.className}`}
+            >
+              {supportMeta.label}
+            </span>
+          </div>
         </div>
       </div>
 

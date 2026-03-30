@@ -20,6 +20,7 @@ import {
   Network,
   ShieldCheck,
 } from "lucide-react"
+import { getToolSupportMeta } from "@/lib/tool-support"
 
 const toolTypes = [
   {
@@ -150,6 +151,7 @@ export default function NodeLibrary() {
         <div className="p-2 space-y-1">
           {toolTypes.map((tool) => {
             const Icon = tool.icon
+            const supportMeta = getToolSupportMeta(tool.type)
             return (
               <div
                 key={tool.type}
@@ -162,8 +164,15 @@ export default function NodeLibrary() {
                     <Icon className="h-4 w-4" strokeWidth={1.5} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-neutral-900 tracking-tight">
-                      {tool.label}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="text-sm font-medium text-neutral-900 tracking-tight">
+                        {tool.label}
+                      </div>
+                      <span
+                        className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${supportMeta.className}`}
+                      >
+                        {supportMeta.label}
+                      </span>
                     </div>
                     <div className="text-xs text-neutral-500 mt-0.5">
                       {tool.description}
