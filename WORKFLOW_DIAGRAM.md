@@ -1,896 +1,540 @@
-# BlockOps - Complete System Workflow Diagram
+# BlockOps Complete System Workflow Diagrams (Current Implementation)
 
-This document contains comprehensive Mermaid diagrams visualizing the entire BlockOps platform architecture, data flow, and interactions.
-
----
+This document maps the current codebase behavior across frontend, backend, AI services, wallet/signing paths, ERC-8004 identity, Filecoin audit storage, scheduling, Telegram linking, and payment gating.
 
 ## 1. High-Level System Architecture
 
 ```mermaid
 graph TB
-    subgraph "User Layer"
-        U[👤 User Browser]
-        UI[🖥️ Next.js Frontend<br/>Port: 3000]
+    subgraph Clients
+        U[User]
+        TG[Telegram Client]
     end
-    
-    subgraph "Authentication & Database"
-        PRIVY[🔐 Privy Auth]
-        SUPA[🗄️ Supabase Database]
+
+    subgraph Frontend
+        FE[Next.js App]
+        NAPI[Next API Routes]
     end
-    
-    subgraph "Backend Services"
-        AI[🤖 AI Agent Backend<br/>FastAPI - Port 8000]
-        BK[⚙️ Blockchain Backend<br/>Express - Port 3000]
-        WF[🔄 Workflow Generator<br/>FastAPI - Port 8001]
+
+    subgraph Core Backend
+        BE[Express Backend]
+        RT[Agent Runtime PEVD]
+        TR[Tool Router]
     end
-    
-    subgraph "Blockchain Layer"
-        ARB[🔗 Arbitrum Sepolia<br/>Chain ID: 421614]
-        ETH[🔗 Ethereum Sepolia]
+
+    subgraph AI Services
+        AGENT[AI Agent Backend FastAPI 8000]
+        WF[Workflow Generator FastAPI 8001]
     end
-    
-    subgraph "Smart Contracts"
-        TF[📝 Token Factory<br/>Stylus Contract]
-        NF[🎨 NFT Factory<br/>Stylus Contract]
-        PE[💰 Payment Escrow<br/>x402 Protocol]
-        USDC[💵 USDC Token]
+
+    subgraph Data and Auth
+        PRIVY[Privy]
+        SUPA[Supabase]
     end
-    
-    U -->|User Actions| UI
-    UI <-->|Authentication| PRIVY
-    UI <-->|Data Storage| SUPA
-    UI -->|AI Chat/Generate| AI
-    UI -->|Workflow Build| WF
-    AI -->|Tool Execution| BK
-    BK -->|Deploy/Transfer| ARB
-    BK -->|Price Fetch| ETH
-    ARB -->|Token Deploy| TF
-    ARB -->|NFT Deploy| NF
-    ARB -->|Payments| PE
-    PE -->|USDC Escrow| USDC
-    
-    style U fill:#e1f5ff
-    style UI fill:#bbdefb
-    style AI fill:#fff9c4
-    style BK fill:#c8e6c9
-    style ARB fill:#f8bbd0
-    style PE fill:#ffccbc
+
+    subgraph External Protocols
+        LIT[Lit Protocol Naga]
+        FLOW[Flow EVM Testnet]
+        ARB[Arbitrum Sepolia]
+        ETHL1[Ethereum Sepolia]
+        FC[Filecoin Calibration]
+    end
+
+    U --> FE
+    TG --> BE
+    FE <--> PRIVY
+    FE <--> SUPA
+    FE --> BE
+    FE --> WF
+    FE --> NAPI
+    NAPI --> LIT
+    NAPI --> ARB
+
+    BE --> TR
+    TR --> RT
+    RT --> AGENT
+    RT --> FLOW
+    RT --> ARB
+    BE --> ETHL1
+    BE <--> SUPA
+    BE --> LIT
+    BE --> FC
 ```
 
----
-
-## 2. Complete User Journey Flow
+## 2. Entry Surfaces and Routing Modes
 
 ```mermaid
 flowchart TD
-    START([👤 User Visits Platform]) --> AUTH{Authenticated?}
-    
-    AUTH -->|No| LOGIN[🔐 Login with Privy<br/>Google/Email/Wallet]
-    AUTH -->|Yes| DASH[📊 Dashboard]
-    
-    LOGIN --> CREATE_USER[💾 Create User in DB<br/>Generate API Key]
-    CREATE_USER --> WALLET_SETUP{Has Wallet?}
-    
-    WALLET_SETUP -->|No| CREATE_WALLET[🔑 Create Agent Wallet<br/>Store Private Key]
-    WALLET_SETUP -->|Yes| IMPORT_WALLET[📥 Import Private Key]
-    
-    CREATE_WALLET --> DASH
-    IMPORT_WALLET --> DASH
-    
-    DASH --> CHOICE{What to Do?}
-    
-    CHOICE -->|Build Manually| BUILDER[🎨 Visual Workflow Builder]
-    CHOICE -->|Use AI| AI_GEN[🤖 AI Agent Generator]
-    CHOICE -->|View Agents| MY_AGENTS[📋 My Agents]
-    
-    BUILDER --> DRAG[🖱️ Drag & Drop Tools]
-    DRAG --> CONNECT[🔗 Connect Tools]
-    CONNECT --> CONFIG[⚙️ Configure Parameters]
-    CONFIG --> SAVE[💾 Save Agent]
-    
-    AI_GEN --> AI_PROMPT[💬 Describe Agent in NL]
-    AI_PROMPT --> AI_PROCESS[🧠 Gemini 2.0 Processes]
-    AI_PROCESS --> AI_WORKFLOW[🔄 Generate Workflow]
-    AI_WORKFLOW --> SAVE
-    
-    SAVE --> AGENT_READY[✅ Agent Ready]
-    
-    MY_AGENTS --> SELECT_AGENT[🔍 Select Agent]
-    SELECT_AGENT --> AGENT_READY
-    
-    AGENT_READY --> INTERACT{How to Interact?}
-    
-    INTERACT -->|UI Chat| CHAT[💬 Chat Interface]
-    INTERACT -->|API| API_CALL[📡 REST API Call]
-    
-    CHAT --> PAYMENT_CHECK{Premium<br/>Feature?}
-    API_CALL --> PAYMENT_CHECK
-    
-    PAYMENT_CHECK -->|Free Tier| EXECUTE[⚡ Execute Tools]
-    PAYMENT_CHECK -->|Premium| PAY_MODAL[💳 Payment Modal]
-    
-    PAY_MODAL --> APPROVE[✅ Approve USDC]
-    APPROVE --> ESCROW[🔒 Deposit to Escrow]
-    ESCROW --> EXECUTE
-    
-    EXECUTE --> BLOCKCHAIN[⛓️ Blockchain Transaction]
-    BLOCKCHAIN --> SUCCESS{Success?}
-    
-    SUCCESS -->|Yes| PAY_COMPLETE[💰 Execute Payment]
-    SUCCESS -->|No| REFUND[↩️ Auto Refund]
-    
-    PAY_COMPLETE --> RESULT[📊 Show Results]
-    REFUND --> ERROR[❌ Show Error]
-    ERROR --> RESULT
-    
-    RESULT --> MORE{Continue?}
-    MORE -->|Yes| INTERACT
-    MORE -->|No| END([✅ Complete])
-    
-    style START fill:#e1f5ff
-    style AUTH fill:#fff9c4
-    style BUILDER fill:#c8e6c9
-    style AI_GEN fill:#ffccbc
-    style EXECUTE fill:#f8bbd0
-    style BLOCKCHAIN fill:#ce93d8
-    style PAY_COMPLETE fill:#a5d6a7
+    START[User interaction] --> SURFACE{Surface}
+
+    SURFACE -->|Web chat| WEBCHAT[Agent chat page]
+    SURFACE -->|Workflow builder| BUILDER[Workflow builder canvas]
+    SURFACE -->|Marketplace| MARKET[Marketplace page]
+    SURFACE -->|Telegram| TELEGRAM[Telegram bot message]
+
+    WEBCHAT --> API_CHAT[POST /api/chat]
+    BUILDER --> WF_GEN[POST workflow generation service]
+    BUILDER --> AGENT_CRUD[Agent CRUD APIs]
+    MARKET --> REGISTRY_DISCOVERY[Registry and manifest discovery]
+    TELEGRAM --> TG_SERVICE[telegramService mode resolver]
+
+    TG_SERVICE --> TG_MODE{Linked agent}
+    TG_MODE -->|No| TG_GENERIC[Generic mode]
+    TG_MODE -->|Yes| TG_AGENT[Agent-linked mode]
+
+    TG_GENERIC --> API_CHAT
+    TG_AGENT --> API_CHAT
 ```
 
----
-
-## 3. AI Chat Message Processing Flow
+## 3. Chat Runtime Execution Flow
 
 ```mermaid
 sequenceDiagram
     actor User
-    participant Frontend as Frontend<br/>(Next.js)
-    participant DB as Supabase DB
-    participant AI as AI Agent Backend<br/>(Port 8000)
-    participant BK as Blockchain Backend<br/>(Port 3000)
-    participant Chain as Arbitrum Sepolia
-    participant Contract as Smart Contracts
-    
-    User->>Frontend: Send message: "Deploy token MyToken"
-    
-    Frontend->>DB: Get agent config by API key
-    DB-->>Frontend: Agent tools & workflow
-    
-    Frontend->>DB: Get user's private key
-    DB-->>Frontend: Private key (encrypted)
-    
-    Frontend->>AI: POST /agent/chat<br/>{tools, user_message, private_key}
-    
-    Note over AI: Parse with Gemini 2.0
-    AI->>AI: Identify tool: deploy_erc20
-    AI->>AI: Extract parameters:<br/>name="MyToken"<br/>symbol="MTK"<br/>supply="1000000"
-    
-    AI->>BK: POST /token/deploy<br/>{privateKey, name, symbol, supply}
-    
-    Note over BK: Validate & Prepare
-    BK->>BK: Create wallet from private key
-    BK->>BK: Convert params to bytes32
-    BK->>Chain: Connect to RPC
-    
-    BK->>Contract: Call TokenFactory.createToken()
-    Contract->>Chain: Deploy new ERC20
-    Chain-->>Contract: Token deployed at address
-    Contract-->>BK: TokenID & Transaction hash
-    
-    BK->>Chain: Wait for confirmation
-    Chain-->>BK: Block confirmed
-    
-    BK-->>AI: {success, tokenId, txHash, explorerUrl}
-    
-    Note over AI: Format response
-    AI-->>Frontend: {message, results, tool_used}
-    
-    Frontend->>DB: Save chat message
-    Frontend->>User: Display: "Token deployed successfully!<br/>View on Explorer"
-    
-    User->>Frontend: Click explorer link
-    Frontend->>Chain: Open block explorer
-```
-
----
-
-## 4. x402 Payment Flow (Premium Features)
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant Frontend as Frontend
+    participant FE as Frontend Chat
+    participant BE as Express /api/chat
+    participant ROUTER as toolRouter
+    participant RUNTIME as BlockOpsAgentRuntime
+    participant AGENT as FastAPI /agent/chat
+    participant DIRECT as directToolExecutor
+    participant CHAIN as Flow or Arbitrum
+    participant AUDIT as toolAuditLogService
+    participant FC as Filecoin
     participant DB as Supabase
-    participant Escrow as Payment Escrow<br/>Smart Contract
-    participant USDC as USDC Token
-    participant Backend as Backend Service
-    participant Chain as Arbitrum Sepolia
-    
-    User->>Frontend: Request premium feature
-    
-    Frontend->>DB: Check AI quota
-    DB-->>Frontend: 0 free calls remaining
-    
-    Frontend->>User: Show Payment Modal<br/>Cost: 0.10 USDC
-    
-    User->>Frontend: Click "Pay & Execute"
-    
-    Note over Frontend: Step 1: Approve USDC
-    Frontend->>USDC: approve(escrow, 0.10 USDC)
-    USDC-->>Frontend: Approval confirmed
-    
-    Note over Frontend: Step 2: Create Agreement
-    Frontend->>Escrow: createAgreement(recipient, 0.10 USDC)
-    Escrow->>USDC: transferFrom(user, escrow, 0.10)
-    USDC-->>Escrow: Transfer complete
-    Escrow->>Escrow: Lock funds in escrow
-    Escrow-->>Frontend: agreementId = 123
-    
-    Frontend->>DB: Store agreement<br/>{id, user, amount, status="pending"}
-    
-    Note over Frontend: Step 3: Generate execution token
-    Frontend->>Frontend: Sign JWT with agreementId
-    Frontend->>Backend: Execute tool with JWT token
-    
-    Backend->>Backend: Verify JWT signature
-    Backend->>Chain: Execute blockchain action
-    
-    alt Action Successful
-        Chain-->>Backend: Transaction confirmed
-        Backend->>Escrow: executeAgreement(agreementId)<br/>with backend private key
-        Escrow->>USDC: transfer(recipient, 0.10)
-        Escrow->>Escrow: Mark agreement as executed
-        Backend-->>Frontend: {success: true, result}
-        Frontend->>DB: Update agreement status="executed"
-        Frontend->>DB: Decrement AI quota
-        Frontend->>User: ✅ Success! Transaction complete
-    else Action Failed
-        Chain-->>Backend: Transaction failed
-        Backend->>Escrow: refundAgreement(agreementId)
-        Escrow->>USDC: transfer(user, 0.10)
-        Escrow->>Escrow: Mark agreement as refunded
-        Backend-->>Frontend: {success: false, error}
-        Frontend->>DB: Update agreement status="refunded"
-        Frontend->>User: ❌ Failed. Funds refunded
+
+    User->>FE: Send natural-language request
+    FE->>BE: sendChatWithMemory(agentId, userId, message, chain, wallet context)
+    BE->>ROUTER: intelligentToolRouting(message, history, chain)
+    ROUTER-->>BE: routingPlan and execution steps
+
+    alt Off-topic or missing required info
+        BE-->>FE: Clarification or off-topic response
+    else Requires tool execution
+        BE->>RUNTIME: run(message, routingPlan, executionFn)
+        RUNTIME->>RUNTIME: ensureIdentity and checkDelegations
+
+        alt Primary agent backend path
+            RUNTIME->>AGENT: /agent/chat with tool graph and context
+            AGENT-->>RUNTIME: tool_calls and results
+        else Direct execution path or fallback
+            RUNTIME->>DIRECT: executeToolsDirectly(routingPlan, executionContext)
+            DIRECT->>CHAIN: Execute reads/writes/schedules
+            CHAIN-->>DIRECT: receipts and outputs
+            DIRECT-->>RUNTIME: tool_calls and results
+        end
+
+        RUNTIME->>RUNTIME: verify receipts, update reputation, decide outcome
+        RUNTIME-->>BE: runtime result
+        BE->>AUDIT: archiveToolExecutionLogs(...)
+        AUDIT->>FC: prepare and upload JSON envelope
+        AUDIT->>DB: persist agent_tool_execution_logs row
+        BE->>DB: persist conversation and messages
+        BE-->>FE: assistant message plus toolResults plus executionAudit
     end
 ```
 
----
-
-## 5. Workflow Builder Component Architecture
+## 4. Conversation Memory Modes
 
 ```mermaid
-graph TB
-    subgraph "Workflow Builder Page"
-        WB[WorkflowBuilder Component]
-        NL[Node Library]
-        NC[Node Config Panel]
-        CE[Custom Edge]
-    end
-    
-    subgraph "Node Types"
-        AN[Agent Node<br/>Start Point]
-        TN[Tool Node<br/>Blockchain Actions]
-    end
-    
-    subgraph "Available Tools"
-        T1[🪙 Deploy Token]
-        T2[🎨 Deploy NFT]
-        T3[💸 Transfer Tokens]
-        T4[🔄 Swap Tokens]
-        T5[💰 Fetch Price]
-        T6[📊 Wallet Analytics]
-        T7[✈️ Airdrop]
-        T8[🏛️ Create DAO]
-        T9[📈 Yield Calculator]
-        T10[🔍 Balance Check]
-    end
-    
-    subgraph "State Management"
-        RF[ReactFlow State]
-        DB[Supabase Database]
-    end
-    
-    WB --> AN
-    WB --> TN
-    NL --> T1 & T2 & T3 & T4 & T5
-    NL --> T6 & T7 & T8 & T9 & T10
-    
-    AN -->|Drag & Drop| RF
-    TN -->|Drag & Drop| RF
-    
-    RF -->|Configure| NC
-    NC -->|Set Params| RF
-    
-    RF -->|Connect Nodes| CE
-    CE -->|Visual Flow| RF
-    
-    WB -->|Save Agent| DB
-    DB -->|Load Agent| WB
-    
-    style WB fill:#bbdefb
-    style RF fill:#c8e6c9
-    style DB fill:#ffccbc
+flowchart TD
+    CHAT[Incoming /api/chat] --> CHECK{Supabase configured and IDs UUID-compatible}
+
+    CHECK -->|Yes| PERSISTENT[Persistent mode]
+    CHECK -->|No| MEMORY[In-memory mode]
+
+    PERSISTENT --> C1[Create or load conversation row]
+    C1 --> C2[Insert user message]
+    C2 --> C3[Load conversation_messages history]
+    C3 --> RUN[Run routing and execution]
+    RUN --> C4[Insert assistant message and tool_calls]
+
+    MEMORY --> M1[Create temp conversation key]
+    M1 --> M2[Store user message in memory map]
+    M2 --> RUN
+    RUN --> M3[Store assistant message in memory map]
 ```
 
----
+## 5. Wallet Setup and Signing Paths
 
-## 6. Backend Service Routing Architecture
+```mermaid
+flowchart TD
+    SETUP[Wallet setup modal] --> MODE{Wallet mode}
+
+    MODE -->|PKP mode| PKP_MINT[Mint PKP on Lit Naga]
+    MODE -->|Traditional mode| ENC_KEY[Encrypt EOA key with Lit action]
+
+    PKP_MINT --> STORE_PKP[Store wallet_type pkp plus wallet_address plus pkp_public_key plus pkp_token_id]
+    ENC_KEY --> STORE_EOA[Store lit:v1 payload in users.private_key]
+
+    STORE_PKP --> EXEC_REQ[Execution request]
+    STORE_EOA --> EXEC_REQ
+
+    EXEC_REQ --> SIGN_MODE{wallet_type}
+    SIGN_MODE -->|pkp| PKP_SIGN[PKP signer path]
+    SIGN_MODE -->|traditional| DEC_SIGN[Decrypt lit:v1 then EOA signer]
+
+    PKP_SIGN --> BROADCAST[Broadcast tx on selected chain]
+    DEC_SIGN --> BROADCAST
+```
+
+## 6. Lit Integration Route Map
 
 ```mermaid
 graph LR
-    subgraph "Blockchain Backend (Express - Port 3000)"
-        APP[app.js<br/>Main Server]
-        
-        subgraph "Routes"
-            HR[/health]
-            TR[/token]
-            NR[/nft]
-            XR[/transfer]
-            PR[/price]
-            NL[/nl-executor]
-        end
-        
-        subgraph "Controllers"
-            TC[tokenController]
-            NC[nftController]
-            XC[transferController]
-            PC[priceController]
-            NLC[nlExecutorController]
-        end
-        
-        subgraph "Utils"
-            BC[blockchain.js<br/>Web3 Connection]
-            HE[helpers.js<br/>Data Formatting]
-        end
-        
-        subgraph "Config"
-            ABI[abis.js<br/>Contract ABIs]
-            CON[constants.js<br/>Addresses & RPC]
-        end
-    end
-    
-    APP --> HR & TR & NR & XR & PR & NL
-    
-    TR --> TC
-    NR --> NC
-    XR --> XC
-    PR --> PC
-    NL --> NLC
-    
-    TC & NC & XC --> BC
-    TC & NC & XC & PC --> HE
-    
-    BC --> ABI
-    BC --> CON
-    
-    style APP fill:#81c784
-    style BC fill:#64b5f6
-    style TC fill:#ffb74d
-    style NC fill:#ff8a65
+    UI[Wallet UI and chat signing] --> MINT["/api/lit/pkp/mint"]
+    UI --> SIGN["/api/lit/pkp/sign"]
+    UI --> ENC["/api/lit/private-key/encrypt"]
+    UI --> DEC["/api/lit/private-key/decrypt"]
+
+    MINT --> LIT_LIB[frontend/lib/lit-server.ts]
+    SIGN --> LIT_LIB
+    ENC --> LIT_LIB
+    DEC --> LIT_LIB
+
+    LIT_LIB --> LIT[Lit API and Lit Actions]
+
+    BE[Express backend] --> LIT_PKP[backend/services/litPkpService.js]
+    LIT_PKP --> LIT
 ```
 
----
-
-## 7. AI Agent Backend Tool Execution Flow
+## 7. Chain Routing and Tool Scope
 
 ```mermaid
-flowchart TD
-    START[🚀 Receive /agent/chat Request] --> PARSE[📝 Parse Request]
-    
-    PARSE --> EXTRACT[🔍 Extract:<br/>• tools<br/>• user_message<br/>• private_key]
-    
-    EXTRACT --> BUILD_PROMPT[🧠 Build Gemini Prompt]
-    
-    BUILD_PROMPT --> TOOL_LIST[📋 List Available Tools:<br/>• transfer<br/>• deploy_erc20<br/>• deploy_nft<br/>• swap<br/>• price<br/>• balance<br/>• airdrop<br/>• dao<br/>• yield<br/>• analytics]
-    
-    TOOL_LIST --> GEMINI[🤖 Send to Gemini 2.0 Flash]
-    
-    GEMINI --> AI_RESPONSE[💡 AI Response]
-    
-    AI_RESPONSE --> CHECK{Tool<br/>Required?}
-    
-    CHECK -->|No| RESPOND[💬 Return text response]
-    
-    CHECK -->|Yes| IDENTIFY[🎯 Identify Tool & Params]
-    
-    IDENTIFY --> ADD_KEY{Private Key<br/>Needed?}
-    
-    ADD_KEY -->|Yes| INSERT_KEY[🔑 Add private_key to params]
-    ADD_KEY -->|No| PREPARE
-    
-    INSERT_KEY --> PREPARE[📦 Prepare API Call]
-    
-    PREPARE --> EXECUTE[⚡ Execute Tool]
-    
-    EXECUTE --> CALL_MAP{Tool Type}
-    
-    CALL_MAP -->|transfer| BE1[POST /transfer]
-    CALL_MAP -->|deploy_erc20| BE2[POST /token/deploy]
-    CALL_MAP -->|deploy_nft| BE3[POST /nft/deploy-collection]
-    CALL_MAP -->|mint_nft| BE4[POST /nft/mint]
-    CALL_MAP -->|swap| BE5[POST /swap]
-    CALL_MAP -->|price| BE6[GET /price]
-    CALL_MAP -->|balance| BE7[GET /transfer/balance]
-    
-    BE1 & BE2 & BE3 & BE4 & BE5 & BE6 & BE7 --> BACKEND[🔗 Blockchain Backend<br/>Port 3000]
-    
-    BACKEND --> RESULT{Success?}
-    
-    RESULT -->|Yes| FORMAT[✅ Format Success Response]
-    RESULT -->|No| ERROR[❌ Format Error Response]
-    
-    FORMAT --> RESPOND
-    ERROR --> RESPOND
-    
-    RESPOND --> END[📤 Return to Frontend]
-    
-    style START fill:#e1f5ff
-    style GEMINI fill:#fff9c4
-    style EXECUTE fill:#c8e6c9
-    style BACKEND fill:#ffccbc
-    style FORMAT fill:#a5d6a7
-    style ERROR fill:#ef9a9a
+flowchart LR
+    REQUEST[Request with chain context] --> CHAIN_ROUTE[Chain-aware routing]
+
+    CHAIN_ROUTE --> FLOW[Flow EVM Testnet]
+    CHAIN_ROUTE --> ARB[Arbitrum Sepolia]
+
+    FLOW --> FLOW_TOOLS[get_balance transfer batch_transfer deploy_erc20 deploy_erc721 schedule_transfer reminders savings payouts payroll grants gas and chain diagnostics]
+    ARB --> ARB_TOOLS[swap quote bridge ens portfolio wallet_history tx_status nft mint token and nft info]
+
+    ARB --> ETH_BRIDGE[Ethereum Sepolia bridge counterpart]
 ```
 
----
+## 8. Scheduling and Reminder Engines
 
-## 8. Database Schema & Relationships
+```mermaid
+sequenceDiagram
+    actor User
+    participant API as Express schedule or reminders routes
+    participant DB as Supabase
+    participant CRON as In-process node-cron scheduler
+    participant EXEC as directToolExecutor or transfer runner
+    participant CHAIN as Flow or Arbitrum
+    participant TG as Telegram delivery
+
+    User->>API: Create schedule or reminder job
+    API->>DB: Insert scheduled_transfers or scheduled_chat_reminders
+    API->>CRON: Register runtime task in memory
+
+    Note over API,CRON: On server start, reloadJobsFromDB and reloadReminderJobsFromDB rehydrate active tasks
+
+    CRON->>EXEC: Trigger due job
+
+    alt Scheduled transfer
+        EXEC->>CHAIN: Send transfer transaction
+        CHAIN-->>EXEC: tx hash or error
+    else Chat reminder
+        EXEC->>CHAIN: Execute read tool (balance, portfolio, price)
+        CHAIN-->>EXEC: result data
+    end
+
+    EXEC->>DB: Update run metadata plus append job log row
+
+    alt Reminder delivery platform is telegram
+        EXEC->>TG: Send reminder message
+    else Reminder delivery platform is web
+        EXEC->>DB: Append reminder message to conversation context
+    end
+```
+
+## 9. Telegram Generic and Agent-Linked Modes
+
+```mermaid
+sequenceDiagram
+    actor TUser as Telegram User
+    participant TG as Telegram API
+    participant SVC as telegramService
+    participant DB as Supabase
+    participant BE as Express /api/chat
+
+    TUser->>TG: Message or command
+    TG->>SVC: /telegram/webhook update
+
+    alt Command is /connect agentId apiKey
+        SVC->>DB: Validate agent and API key hash
+        SVC->>DB: Save linked_agent_id and linked_at
+        SVC-->>TUser: Linked mode confirmation
+    else Command is /disconnect
+        SVC->>DB: Clear linked_agent_id
+        SVC-->>TUser: Generic mode confirmation
+    else Free text query
+        SVC->>DB: Resolve linked mode and wallet context
+        SVC->>BE: POST /api/chat with deliveryPlatform telegram
+        BE-->>SVC: assistant response plus tool results
+        SVC-->>TUser: Formatted reply
+    end
+```
+
+## 10. ERC-8004 Runtime, Registry, and Trust Flow
+
+```mermaid
+sequenceDiagram
+    participant UI as Frontend
+    participant AG as /agents routes
+    participant RT as BlockOpsAgentRuntime
+    participant ID as Identity Registry
+    participant VAL as Validation Registry
+    participant REP as Reputation Registry
+    participant DB as Supabase
+
+    UI->>AG: Create agent and configure tools
+    UI->>AG: Optional register-on-chain request
+    AG->>ID: registerAgent(owner, manifestURI)
+    ID-->>AG: onChainId and tx proof
+    AG->>DB: Save on_chain_id and registry proof metadata
+
+    UI->>RT: Run task via chat execution
+    RT->>RT: ensureIdentity if missing
+    RT->>VAL: validationRequest for verified tx hashes
+    RT->>REP: giveFeedback successRate updates
+    RT->>DB: Persist runtime and tool execution references
+
+    UI->>AG: Read /agents/:id/manifest and registry endpoints
+```
+
+## 11. Filecoin Audit Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant CHAT as conversationController
+    participant AUDIT as toolAuditLogService
+    participant FILE as filecoinStorageService
+    participant SYN as Synapse SDK
+    participant FC as Filecoin Calibration
+    participant DB as Supabase
+
+    CHAT->>AUDIT: archiveToolExecutionLogs(agentId, userId, toolResults)
+    AUDIT->>AUDIT: Sanitize params and redact sensitive fields
+    AUDIT->>FILE: archiveJsonToFilecoin(payload)
+    FILE->>SYN: prepare(dataSize)
+    SYN->>FC: Optional prepare transaction
+    FILE->>SYN: upload(envelope bytes)
+    SYN-->>FILE: pieceCid and uri
+    FILE-->>AUDIT: storage status and metadata
+    AUDIT->>DB: Insert agent_tool_execution_logs row
+    CHAT-->>CHAT: Include execution audit summary in response
+```
+
+## 12. Agent Registry Discovery and Marketplace
+
+```mermaid
+flowchart LR
+    AGENT_UI[Agent management UI] --> REG_UPSERT[PUT /agents/:id/registry]
+    REG_UPSERT --> REG_DB[agent_registry table]
+    REG_UPSERT --> FC_META[Filecoin metadata archive]
+
+    MARKET_UI[Marketplace page] --> CHAIN_SCAN[Query IdentityRegistry AgentRegistered events]
+    MARKET_UI --> DISCOVER[GET /agents/registry/discover]
+    MARKET_UI --> MANIFEST[GET /agents/:id/manifest]
+
+    CHAIN_SCAN --> MERGED[Merge on-chain IDs plus local metadata plus reputation scores]
+    DISCOVER --> MERGED
+    MANIFEST --> MERGED
+    MERGED --> LISTING[Marketplace listing cards and details]
+```
+
+## 13. x402 Payment and AI Quota Gating
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant FE as Frontend
+    participant NAPI as Next payment API routes
+    participant DB as Supabase
+    participant ESCROW as Payment Escrow contract
+    participant EXEC as Tool execution path
+
+    User->>FE: Request premium action
+    FE->>NAPI: GET /api/payments/ai-quota
+    NAPI->>DB: check_ai_generation_quota()
+    DB-->>NAPI: canGenerate and freeRemaining
+
+    alt Free quota available
+        FE->>EXEC: Proceed without payment
+    else Payment required
+        FE->>NAPI: POST /api/payments/agreement
+        FE->>ESCROW: Submit payment transaction
+        FE->>NAPI: POST /api/payments/verify
+        NAPI->>ESCROW: verifyPayment plus getPayment
+        NAPI->>DB: Upsert payments row and execution token
+        NAPI-->>FE: executionToken
+        FE->>EXEC: Run premium action with execution token
+
+        alt Action success
+            FE->>NAPI: POST /api/payments/execute
+            NAPI->>ESCROW: executePayment(paymentId)
+            NAPI->>DB: Mark payment executed
+        else Action failure
+            FE->>NAPI: POST /api/payments/refund
+            NAPI->>ESCROW: refundPayment(paymentId)
+            NAPI->>DB: Mark payment refunded
+        end
+    end
+```
+
+## 14. API Topology Map
+
+```mermaid
+graph TB
+    subgraph NextJS_API
+        N1["/api/lit/pkp/mint"]
+        N2["/api/lit/pkp/sign"]
+        N3["/api/lit/private-key/encrypt"]
+        N4["/api/lit/private-key/decrypt"]
+        N5["/api/payments/agreement"]
+        N6["/api/payments/pricing"]
+        N7["/api/payments/ai-quota"]
+        N8["/api/payments/verify"]
+        N9["/api/payments/execute"]
+        N10["/api/payments/refund"]
+    end
+
+    subgraph Express_Public
+        E1["/health"]
+        E2["/price"]
+        E3["/gas"]
+        E4["/ens"]
+        E5["/portfolio"]
+        E6["/api/chat plus conversations"]
+        E7["/transfer/prepare"]
+        E8["/wallet/tx and wallet/history"]
+        E9["/telegram/webhook"]
+    end
+
+    subgraph Express_Protected
+        P1["/token /nft /transfer /wallet"]
+        P2["/allowance /swap /bridge /chain /batch"]
+        P3["/nl-executor /contract-chat /email"]
+        P4["/schedule /reminders"]
+        P5["/agents CRUD registry audit manifest"]
+        P6["/webhooks and /telegram admin"]
+    end
+
+    subgraph FastAPI_Services
+        F1[AI Agent Backend 8000: /agent/chat /create-workflow /tools /health]
+        F2[Workflow Generator 8001: /create-workflow /available-tools /health]
+    end
+
+    E6 --> F1
+```
+
+## 15. Core Data Model Relationships
 
 ```mermaid
 erDiagram
-    USERS ||--o{ AGENTS : creates
-    USERS ||--o{ CHAT_MESSAGES : sends
-    USERS ||--o{ PAYMENT_AGREEMENTS : initiates
-    AGENTS ||--o{ CHAT_MESSAGES : receives
-    AGENTS ||--o{ AGENT_TOOLS : contains
-    
+    USERS ||--o{ AGENTS : owns
+    AGENTS ||--o{ CONVERSATIONS : serves
+    CONVERSATIONS ||--o{ CONVERSATION_MESSAGES : contains
+
+    AGENTS ||--o{ TELEGRAM_USERS : linked_to
+    AGENTS ||--o{ SCHEDULED_TRANSFERS : schedules
+    USERS ||--o{ SCHEDULED_CHAT_REMINDERS : creates
+
+    AGENTS ||--o| AGENT_REGISTRY : publishes
+    AGENTS ||--o{ AGENT_TOOL_EXECUTION_LOGS : emits
+
+    USERS ||--o{ PAYMENTS : pays
+    AGENTS ||--o{ PAYMENTS : billed_to
+    USERS ||--o{ PAYMENT_AGREEMENTS : accepts
+    USERS ||--o{ AI_GENERATION_QUOTAS : tracked_by_day
+
     USERS {
-        uuid id PK
-        string privy_id UK
-        string email
-        string wallet_address
-        string api_key UK
-        string private_key
-        int ai_quota_remaining
-        timestamp created_at
+      text id PK
+      text wallet_type
+      text wallet_address
+      text pkp_public_key
+      text pkp_token_id
     }
-    
+
     AGENTS {
-        uuid id PK
-        uuid user_id FK
-        string name
-        string description
-        string api_key UK
-        jsonb workflow
-        timestamp created_at
+      uuid id PK
+      text user_id FK
+      text name
+      text api_key
+      text on_chain_id
     }
-    
-    AGENT_TOOLS {
-        uuid id PK
-        uuid agent_id FK
-        string tool_name
-        string next_tool
-        jsonb configuration
-        int order
+
+    CONVERSATIONS {
+      uuid id PK
+      uuid agent_id FK
+      uuid user_id FK
+      text title
+      int message_count
     }
-    
-    CHAT_MESSAGES {
-        uuid id PK
-        uuid agent_id FK
-        uuid user_id FK
-        string message
-        string response
-        jsonb metadata
-        timestamp created_at
+
+    CONVERSATION_MESSAGES {
+      uuid id PK
+      uuid conversation_id FK
+      text role
+      text content
+      jsonb tool_calls
     }
-    
-    PAYMENT_AGREEMENTS {
-        uuid id PK
-        uuid user_id FK
-        string agreement_id
-        string recipient_address
-        decimal amount_usdc
-        string status
-        string tx_hash
-        timestamp created_at
-        timestamp executed_at
+
+    AGENT_REGISTRY {
+      uuid id PK
+      uuid agent_id FK
+      text status
+            text capabilities
+      text metadata_cid
     }
-    
-    AI_USAGE_LOGS {
-        uuid id PK
-        uuid user_id FK
-        string action_type
-        int tokens_used
-        decimal cost_usdc
-        timestamp created_at
+
+    AGENT_TOOL_EXECUTION_LOGS {
+      uuid id PK
+      text agent_id
+      text tool_name
+      text chain
+      text filecoin_cid
+      text storage_status
+    }
+
+    PAYMENTS {
+      uuid id PK
+      text user_id FK
+      uuid agent_id FK
+      text payment_hash
+      text status
+      text execution_token
+    }
+
+    SCHEDULED_TRANSFERS {
+      uuid id PK
+      text agent_id
+      text chain
+      text cron_expression
+      text status
+    }
+
+    SCHEDULED_CHAT_REMINDERS {
+      uuid id PK
+      text user_id
+      text task_type
+      text delivery_platform
+      text status
     }
 ```
-
----
-
-## 9. Smart Contract Deployment Architecture
-
-```mermaid
-graph TB
-    subgraph "Stylus Contracts (Rust)"
-        TFS[Token Factory Source<br/>token_factory/src/lib.rs]
-        NFS[NFT Factory Source<br/>nft_factory/src/lib.rs]
-    end
-    
-    subgraph "Build Process"
-        CARGO[Cargo Build<br/>--release --target wasm32]
-        WASM[WASM Binaries]
-    end
-    
-    subgraph "Deployment"
-        STYLUS[Stylus CLI<br/>cargo-stylus deploy]
-    end
-    
-    subgraph "Arbitrum Sepolia"
-        TFC[Token Factory Contract<br/>0x...]
-        NFC[NFT Factory Contract<br/>0x...]
-    end
-    
-    subgraph "Solidity Contracts"
-        PES[PaymentEscrow.sol]
-        HH[Hardhat Deployment]
-    end
-    
-    subgraph "Payment Contract"
-        PEC[Payment Escrow<br/>0x185eba222e50dedae23...]
-    end
-    
-    TFS --> CARGO
-    NFS --> CARGO
-    CARGO --> WASM
-    WASM --> STYLUS
-    STYLUS --> TFC
-    STYLUS --> NFC
-    
-    PES --> HH
-    HH --> PEC
-    
-    TFC -->|Used by| BACKEND[Backend Token Operations]
-    NFC -->|Used by| BACKEND
-    PEC -->|Used by| PAYMENTS[Payment Operations]
-    
-    style TFS fill:#ff9800
-    style NFS fill:#ff9800
-    style TFC fill:#4caf50
-    style NFC fill:#4caf50
-    style PEC fill:#2196f3
-```
-
----
-
-## 10. Environment Configuration Flow
-
-```mermaid
-graph TB
-    subgraph "Frontend .env"
-        FE1[NEXT_PUBLIC_SUPABASE_URL]
-        FE2[NEXT_PUBLIC_SUPABASE_ANON_KEY]
-        FE3[NEXT_PUBLIC_PRIVY_APP_ID]
-        FE4[NEXT_PUBLIC_RPC_URL<br/>Ethereum Sepolia]
-        FE5[NEXT_PUBLIC_ARBITRUM_SEPOLIA_RPC_URL]
-        FE6[NEXT_PUBLIC_PAYMENT_CONTRACT_ADDRESS]
-        FE7[NEXT_PUBLIC_USDC_ADDRESS]
-        FE8[PAYMENT_BACKEND_PRIVATE_KEY]
-        FE9[JWT_SECRET]
-    end
-    
-    subgraph "Backend .env"
-        BE1[PORT=3000]
-        BE2[TOKEN_FACTORY_ADDRESS]
-        BE3[NFT_FACTORY_ADDRESS]
-        BE4[RPC_URL<br/>Arbitrum Sepolia]
-        BE5[ETHERSCAN_API_KEY]
-    end
-    
-    subgraph "AI Agent .env"
-        AI1[GEMINI_API_KEY]
-        AI2[BACKEND_URL=http://localhost:3000]
-    end
-    
-    subgraph "Services"
-        FRONTEND[Frontend App]
-        BACKEND[Blockchain Backend]
-        AIAGENT[AI Agent Backend]
-    end
-    
-    FE1 & FE2 & FE3 --> FRONTEND
-    FE4 & FE5 & FE6 & FE7 --> FRONTEND
-    FE8 & FE9 --> FRONTEND
-    
-    BE1 & BE2 & BE3 & BE4 & BE5 --> BACKEND
-    
-    AI1 & AI2 --> AIAGENT
-    
-    FRONTEND -->|API Calls| AIAGENT
-    AIAGENT -->|Tool Execution| BACKEND
-    FRONTEND -->|Blockchain Reads| BACKEND
-    
-    style FRONTEND fill:#2196f3
-    style BACKEND fill:#4caf50
-    style AIAGENT fill:#ff9800
-```
-
----
-
-## 11. Docker Compose Service Architecture
-
-```mermaid
-graph TB
-    subgraph "Docker Compose Services"
-        direction TB
-        
-        subgraph "Frontend Service"
-            F[Next.js App<br/>Port: 3000<br/>Image: node:18]
-        end
-        
-        subgraph "Backend Service"
-            B[Express API<br/>Port: 3000<br/>Image: node:18]
-        end
-        
-        subgraph "AI Agent Service"
-            A[FastAPI<br/>Port: 8000<br/>Image: python:3.9]
-        end
-        
-        subgraph "Workflow Gen Service"
-            W[FastAPI<br/>Port: 8001<br/>Image: python:3.9]
-        end
-    end
-    
-    subgraph "External Services"
-        S[Supabase Cloud<br/>PostgreSQL]
-        P[Privy Auth]
-        AR[Arbitrum Sepolia RPC]
-        ES[Ethereum Sepolia RPC]
-    end
-    
-    F -->|API Calls| A
-    A -->|Tool Execution| B
-    F -->|Workflow| W
-    F <-->|Database| S
-    F <-->|Auth| P
-    B -->|Transactions| AR
-    B -->|Price Data| ES
-    
-    style F fill:#2196f3
-    style B fill:#4caf50
-    style A fill:#ff9800
-    style W fill:#9c27b0
-    style S fill:#00bcd4
-    style AR fill:#f44336
-```
-
----
-
-## 12. Complete API Endpoint Map
-
-```mermaid
-mindmap
-  root((BlockOps API))
-    Frontend
-      Supabase
-        User CRUD
-        Agent CRUD
-        Chat CRUD
-        Payment CRUD
-      Next.js API Routes
-        /api/payments/create
-        /api/payments/execute
-        /api/payments/refund
-    AI Agent Backend :8000:
-      /agent/chat
-        POST: Process NL message
-      /generate/workflow
-        POST: Generate from description
-      /tools/list
-        GET: Available tools
-    Blockchain Backend :3000:
-      /health
-        GET: Health check
-      /token
-        POST /deploy: Deploy ERC20
-        GET /info/:address: Token details
-        GET /balance/:token/:owner
-      /nft
-        POST /deploy-collection
-        POST /mint
-        GET /info/:collection/:id
-      /transfer
-        POST: Transfer tokens
-        GET /balance/:address
-      /price
-        GET /:symbol: Token price
-      /nl-executor
-        GET /discover/:address
-        POST /execute
-        POST /quick-execute
-```
-
----
-
-## 13. Security & Authentication Flow
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant Frontend
-    participant Privy
-    participant Supabase
-    participant Backend
-    
-    Note over User,Backend: Initial Authentication
-    User->>Frontend: Click "Login"
-    Frontend->>Privy: Initiate OAuth
-    Privy->>User: Show login options
-    User->>Privy: Authenticate (Google/Email)
-    Privy-->>Frontend: Return user session + JWT
-    
-    Frontend->>Supabase: Check if user exists
-    alt New User
-        Supabase-->>Frontend: User not found
-        Frontend->>Frontend: Generate API key
-        Frontend->>Frontend: Create agent wallet
-        Frontend->>Supabase: Create user record
-    else Existing User
-        Supabase-->>Frontend: Return user data
-    end
-    
-    Note over User,Backend: Agent Interaction
-    User->>Frontend: Send agent command
-    Frontend->>Supabase: Validate API key
-    Supabase-->>Frontend: Return agent config
-    
-    Frontend->>Supabase: Get encrypted private key
-    Supabase-->>Frontend: Private key
-    
-    Frontend->>Backend: Execute with private key
-    Backend->>Backend: Validate request
-    Backend->>Backend: Sign transaction
-    Backend-->>Frontend: Transaction result
-    
-    Note over User,Backend: Payment Authentication
-    User->>Frontend: Premium action
-    Frontend->>Frontend: Generate JWT execution token<br/>with agreementId
-    Frontend->>Backend: Send JWT + request
-    Backend->>Backend: Verify JWT signature
-    Backend->>Backend: Check agreementId exists
-    Backend-->>Frontend: Execute if valid
-```
-
----
-
-## 14. Error Handling & Retry Logic
-
-```mermaid
-flowchart TD
-    START[User Action] --> FRONTEND[Frontend Request]
-    
-    FRONTEND --> TRY1[Attempt 1]
-    
-    TRY1 --> CHECK1{Success?}
-    
-    CHECK1 -->|Yes| SUCCESS[✅ Complete]
-    CHECK1 -->|No| ERROR1[⚠️ Error Type?]
-    
-    ERROR1 --> TYPE1{Error Category}
-    
-    TYPE1 -->|Network| RETRY1[Wait 1s + Retry]
-    TYPE1 -->|Gas| GAS_FIX[Increase Gas Limit]
-    TYPE1 -->|Nonce| NONCE_FIX[Refresh Nonce]
-    TYPE1 -->|Insufficient Funds| FUND_ERROR[❌ Show Balance Error]
-    TYPE1 -->|Contract Revert| CONTRACT_ERROR[❌ Show Revert Reason]
-    
-    RETRY1 --> TRY2[Attempt 2]
-    GAS_FIX --> TRY2
-    NONCE_FIX --> TRY2
-    
-    TRY2 --> CHECK2{Success?}
-    
-    CHECK2 -->|Yes| SUCCESS
-    CHECK2 -->|No| ERROR2[⚠️ Still Failing]
-    
-    ERROR2 --> TYPE2{Retry Count}
-    
-    TYPE2 -->|< 3| RETRY2[Wait 2s + Retry]
-    TYPE2 -->|>= 3| FAIL[❌ Final Failure]
-    
-    RETRY2 --> TRY3[Attempt 3]
-    TRY3 --> CHECK3{Success?}
-    
-    CHECK3 -->|Yes| SUCCESS
-    CHECK3 -->|No| FAIL
-    
-    FUND_ERROR --> LOG[📝 Log Error]
-    CONTRACT_ERROR --> LOG
-    FAIL --> LOG
-    
-    LOG --> REFUND{Payment<br/>Involved?}
-    
-    REFUND -->|Yes| AUTO_REFUND[♻️ Auto Refund via Escrow]
-    REFUND -->|No| NOTIFY[📧 Notify User]
-    
-    AUTO_REFUND --> NOTIFY
-    NOTIFY --> END[🏁 End]
-    SUCCESS --> END
-    
-    style SUCCESS fill:#a5d6a7
-    style FAIL fill:#ef9a9a
-    style AUTO_REFUND fill:#fff59d
-```
-
----
-
-## 15. Development & Deployment Pipeline
-
-```mermaid
-graph LR
-    subgraph "Development"
-        DEV[👨‍💻 Local Development]
-        TEST[🧪 Testing]
-        GIT[📦 Git Commit]
-    end
-    
-    subgraph "Version Control"
-        GITHUB[GitHub Repository<br/>main branch]
-    end
-    
-    subgraph "CI/CD"
-        VERCEL[▲ Vercel<br/>Auto Deploy]
-        DOCKER[🐳 Docker Build]
-    end
-    
-    subgraph "Production"
-        FRONT_PROD[🌐 Frontend<br/>Vercel Hosting]
-        BACK_PROD[⚙️ Backend Services<br/>Docker Containers]
-    end
-    
-    subgraph "Blockchain"
-        CONTRACTS[📝 Smart Contracts<br/>Arbitrum Sepolia]
-    end
-    
-    DEV --> TEST
-    TEST --> GIT
-    GIT --> GITHUB
-    
-    GITHUB -->|Push to main| VERCEL
-    GITHUB -->|Manual deploy| DOCKER
-    
-    VERCEL --> FRONT_PROD
-    DOCKER --> BACK_PROD
-    
-    FRONT_PROD <--> BACK_PROD
-    BACK_PROD <--> CONTRACTS
-    
-    style DEV fill:#bbdefb
-    style VERCEL fill:#00bcd4
-    style FRONT_PROD fill:#4caf50
-    style CONTRACTS fill:#f44336
-```
-
----
 
 ## Summary
 
-This comprehensive workflow diagram covers:
+The current BlockOps implementation is represented as:
 
-1. **High-Level Architecture** - Overall system components and connections
-2. **User Journey** - Complete user interaction flow
-3. **AI Processing** - How natural language is converted to blockchain actions
-4. **Payment System** - x402 protocol payment flow
-5. **Component Architecture** - Frontend builder structure
-6. **Backend Routing** - API endpoint organization
-7. **Tool Execution** - AI agent backend processing
-8. **Database Schema** - Data relationships
-9. **Smart Contracts** - Deployment and usage
-10. **Configuration** - Environment variables
-11. **Docker Services** - Container architecture
-12. **API Endpoints** - Complete endpoint map
-13. **Security** - Authentication and authorization
-14. **Error Handling** - Retry logic and failure recovery
-15. **Deployment** - Development to production pipeline
+1. Multi-surface entry points: web chat, workflow builder, marketplace, and Telegram.
+2. Chain-aware execution with Flow EVM Testnet as default and Arbitrum Sepolia for advanced tooling.
+3. Runtime orchestration with ERC-8004 identity, verification, and reputation updates.
+4. Dual wallet model with Lit PKP and Lit-encrypted traditional key compatibility.
+5. Filecoin-backed audit logs indexed in Supabase.
+6. Scheduling and reminder automation with DB reload on startup.
+7. Optional x402 payment gating and AI quota enforcement through Next.js API routes.
 
-Each diagram can be rendered using any Mermaid-compatible tool or viewer.
+This document is intended to match current code paths, not the older single-chain architecture.

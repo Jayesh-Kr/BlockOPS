@@ -213,9 +213,9 @@ This means the Flow story is visible in both:
 - chat-based natural language execution
 - visual workflow composition
 
-## Honest Current Limits
+## Flow-Specific Scope
 
-These remain Arbitrum Sepolia-only in the current build:
+These features remain on Arbitrum Sepolia in the current build and are not part of the Flow track demo path:
 
 - ERC-20 / ERC-721 deployment flows
 - swap routes
@@ -223,7 +223,7 @@ These remain Arbitrum Sepolia-only in the current build:
 - ENS tools
 - portfolio/history features that depend on Etherscan-style indexing
 
-This repo is currently a Flow EVM integration, not a Cadence-native Flow app.
+The Flow track implementation in this repo focuses on Flow EVM savings, payouts, payroll, grants, reminders, and wallet-readiness flows.
 
 ## Key Flow Files
 

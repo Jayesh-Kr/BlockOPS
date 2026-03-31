@@ -1,148 +1,148 @@
-# Agent Registry + Filecoin Audit Logging
+# Filecoin Audit Logging Setup
 
-This document explains the current implementation for immutable tool execution logging using Synapse SDK on Filecoin Calibration.
+BlockOps uses Filecoin Calibration and Synapse SDK to store immutable tool execution logs. Every audited tool run can produce a Filecoin-backed JSON record plus a matching row in Supabase for fast lookup inside the product.
 
-## 0. Prerequisites
+## What We Implemented
 
-- Node.js 20+
-- Calibration wallet funded with:
-  - tFIL (gas)
-  - tUSDFC (storage payment)
+- Filecoin archival through `@filoz/synapse-sdk`.
+- Per-tool audit records generated after chat-driven execution.
+- Sanitization of request parameters and result payloads before storage.
+- Supabase-backed indexing for registry discovery and log lookup.
+- Retrieval endpoints that return the exact archived JSON envelope.
 
-## 1. Track Compliance
+## Main Files
 
-The backend storage path now uses Synapse SDK only.
+- `backend/services/filecoinStorageService.js`
+- `backend/services/toolAuditLogService.js`
+- `backend/controllers/conversationController.js`
+- `backend/controllers/agentRegistryController.js`
+- `backend/routes/agentRoutes.js`
+- `backend/database/migrations/003_agent_registry_and_filecoin_audit.sql`
 
-- SDK: @filoz/synapse-sdk
-- Chain: Filecoin Calibration
-- Storage flow: synapse.storage.prepare() -> synapse.storage.upload()
-- Content identifier: PieceCID (stored in filecoin_cid)
+## Required Environment Variables
 
-## 2. Environment Variables
+Add these to `backend/.env`:
 
-Add these variables in backend env.
+```bash
+FILECOIN_WALLET_PRIVATE_KEY=your_calibration_private_key
+SYNAPSE_SOURCE=blockops-agent-audit
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_KEY=your_service_role_key
+```
 
-### Required for Synapse Storage
+Optional settings:
 
-- FILECOIN_WALLET_PRIVATE_KEY
-  - 32-byte hex private key (with or without 0x prefix).
-  - Used to sign prepare transaction when deposit/approval is needed.
-- SYNAPSE_SOURCE
-  - App identifier written in metadata.
-  - Example: blockops-agent-audit.
+```bash
+SYNAPSE_WITH_CDN=false
+FILECOIN_PREPARE_BUFFER_BYTES=4096
+FILECOIN_AUDIT_WAIT_MS=8000
+```
 
-### Optional
+Notes:
 
-- SYNAPSE_WITH_CDN
-  - true/false flag to enable accelerated retrieval.
-  - Default in current implementation: false.
-- FILECOIN_PREPARE_BUFFER_BYTES
-  - Optional extra buffer applied to prepare dataSize.
-  - Helps avoid tiny lockup shortfalls on commit.
-  - Default: 4096.
-- FILECOIN_AUDIT_WAIT_MS
-  - Optional max wait time for archival in chat response path.
-  - If archival exceeds this budget, API returns immediately with pending audit status.
-  - Default: 8000.
+- `FILECOIN_WALLET_PRIVATE_KEY` is used to sign `prepare()` transactions when Synapse requires them.
+- `SYNAPSE_SOURCE` is written into the archive metadata.
+- Supabase is required for the local index tables even though the full payload is stored on Filecoin.
 
-### Still Required for Persistence
+## Network and Storage Model
 
-- SUPABASE_URL
-- SUPABASE_SERVICE_KEY
+BlockOps uses:
 
-Without Supabase, audit and registry rows cannot be persisted.
+- Filecoin Calibration for storage settlement and retrieval
+- Synapse SDK for `prepare()` and `upload()`
+- PieceCID as the canonical Filecoin content identifier
 
-## 3. Database Migration
+The storage flow is:
 
-Run migration:
+`prepare() -> execute funding tx if needed -> upload() -> store PieceCID + URI in Supabase`
 
-- backend/database/migrations/003_agent_registry_and_filecoin_audit.sql
+## Database Setup
 
-Tables used:
+Run this migration in Supabase:
 
-- agent_registry
-- agent_tool_execution_logs
+- `backend/database/migrations/003_agent_registry_and_filecoin_audit.sql`
 
-## 4. Files Added or Updated
+Tables created by that migration:
 
-- backend/services/filecoinStorageService.js
-  - Synapse SDK client init with calibration chain.
-  - 127-byte minimum upload enforcement.
-  - prepare + upload workflow.
-  - Returns pieceCid, uri, and optional prepareTxHash.
-- backend/services/toolAuditLogService.js
-  - Sanitizes params/results.
-  - Archives each tool payload through filecoinStorageService.
-  - Persists filecoin_cid (PieceCID), storage_status, and prepareTxHash metadata.
-- backend/controllers/conversationController.js
-  - Includes executionAudit in chat response.
-- backend/controllers/agentRegistryController.js
-  - Registry upsert/read/discovery + audit listing endpoints.
-- backend/routes/agentRoutes.js
-  - Registry and audit routes wired.
+- `agent_registry`
+- `agent_tool_execution_logs`
 
-## 5. Runtime Flow
+## What Gets Stored
 
-1. User triggers tool execution through chat.
-2. Each tool call generates structured audit payload.
-3. Payload is sanitized.
-4. archiveJsonToFilecoin() is called.
-5. Synapse prepare() computes funding/approval requirement.
-6. If transaction needed, execute and capture tx hash.
-7. Synapse upload() stores bytes and returns PieceCID.
-8. Supabase row in agent_tool_execution_logs is written with:
-   - filecoin_cid
-   - filecoin_uri
-   - storage_status
-   - storage_error (if any)
-9. Chat response returns executionAudit summary.
+Each audited tool execution records:
 
-## 6. What Gets Logged Per Tool
+- `agent_id`
+- `user_id`
+- `conversation_id`
+- `tool_name`
+- `chain`
+- sanitized input parameters
+- summarized result payload
+- success or failure status
+- transaction hash when available
+- `filecoin_cid`
+- `filecoin_uri`
+- storage status and any storage error
 
-- agentId
-- userId
-- conversationId
-- timestamp
-- tool
-- chain
-- params_sanitized
-- result_summary
-  - success
-  - status
-  - txHash
-  - amount
-  - prepareTxHash (when applicable)
-- filecoin_cid (PieceCID)
-- filecoin_uri
-- storage_status
-- storage_error
+The archived Filecoin payload is wrapped in a standard JSON envelope with:
 
-## 7. Verification Checklist (Calibration)
+- `schemaVersion`
+- `payload`
+- `metadata`
+- `name`
+- `namespace`
+- `timestamp`
 
-1. Fund test wallet with tFIL and tUSDFC.
-2. Run a tool-triggering chat request.
-3. Confirm logs include prepare transaction hash (if generated).
-4. Confirm Supabase row has:
-   - storage_status = stored
-   - filecoin_cid starting with bafkzcib
-5. Optionally perform download by PieceCID to verify retrieval bytes.
+## Runtime Flow
 
-## 8. API Summary
+1. A user sends a message through the chat UI.
+2. `/api/chat` routes the request through the backend runtime.
+3. Tool execution results are collected in `conversationController.js`.
+4. `toolAuditLogService.js` sanitizes parameters and results.
+5. `filecoinStorageService.js` prepares and uploads the JSON payload to Filecoin Calibration.
+6. The backend stores the resulting PieceCID and storage metadata in `agent_tool_execution_logs`.
+7. The chat response includes a compact execution audit summary.
 
-### Registry
+## API Endpoints
 
-- GET /agents/registry/discover
-- PUT /agents/:id/registry
-- GET /agents/:id/registry
+Registry endpoints:
 
-### Audit Logs
+- `GET /agents/registry/discover`
+- `PUT /agents/:id/registry`
+- `GET /agents/:id/registry`
 
-- GET /agents/:id/audit-logs
+Audit endpoints:
 
-## 9. Setup Checklist
+- `GET /agents/:id/audit-logs`
+- `GET /agents/:id/audit-logs/:logId/content`
 
-1. Install required SDK packages.
-2. Set FILECOIN_WALLET_PRIVATE_KEY and SYNAPSE_SOURCE.
-3. Run migration 003 in Supabase.
-4. Restart backend.
-5. Trigger tools and validate filecoin_cid + storage_status.
+The `/content` endpoint returns the exact archived envelope together with convenience fields for `payload`, `metadata`, and `rawText`.
+
+## How to Set It Up
+
+1. Fund a Filecoin Calibration wallet with `tFIL` and `tUSDFC`.
+2. Add the Filecoin and Supabase values to `backend/.env`.
+3. Run `backend/database/migrations/003_agent_registry_and_filecoin_audit.sql`.
+4. Start the backend.
+5. Trigger a tool execution from chat or through an agent route.
+6. Open the audit logs UI or query the audit endpoints.
+
+## How to Verify It
+
+1. Run a chat request that executes at least one tool.
+2. Confirm the response includes a tool execution log summary.
+3. Check Supabase and verify that the row contains:
+   - `storage_status = stored` or `pending`
+   - `filecoin_cid`
+   - `filecoin_uri`
+4. Call `GET /agents/:id/audit-logs/:logId/content` to retrieve the archived JSON.
+5. Confirm the returned `payload` matches the tool execution that just ran.
+
+## Why Filecoin Matters Here
+
+Filecoin gives BlockOps a durable audit layer for autonomous agents:
+
+- tool activity is preserved outside the app database
+- audit records are portable and inspectable
+- judges can verify that execution logs are not just UI-only artifacts
+- the same archive flow supports both agent registry metadata and execution history
