@@ -9,6 +9,8 @@ const FLOW_SUPPORTED_TOOLS = new Set([
   'get_balance',
   'transfer',
   'batch_transfer',
+  'deploy_erc20',
+  'deploy_erc721',
   'lookup_transaction',
   'lookup_block',
   'fetch_events',
@@ -30,8 +32,6 @@ const FLOW_SUPPORTED_TOOLS = new Set([
 ]);
 
 const ARBITRUM_ONLY_TOOLS = new Set([
-  'deploy_erc20',
-  'deploy_erc721',
   'mint_nft',
   'batch_mint',
   'get_portfolio',
@@ -88,7 +88,7 @@ function isToolSupportedOnChain(tool, chain) {
 
 function buildUnsupportedToolError(tool, chain) {
   const config = getChainConfig(chain);
-  return `${tool} is not supported on ${config.name} yet. This tool is available on Arbitrum Sepolia only in the current hackathon build.`;
+  return `${tool} is not supported on ${config.name} in the current build.`;
 }
 
 module.exports = {

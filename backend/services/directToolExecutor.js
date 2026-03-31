@@ -1767,10 +1767,17 @@ function formatToolResponse(toolResults) {
         return `Transfer completed. Tx: ${payload.transactionHash || 'unknown'}.`;
       }
       case 'deploy_erc20': {
-        return `Token deployed. Token ID: ${payload.tokenId || 'unknown'}. Tx: ${payload.transactionHash || 'unknown'}.`;
+        const tokenAddress = payload.tokenAddress || payload.contractAddress || null;
+        const txHash = payload.transactionHash || payload.txHash || 'unknown';
+        if (tokenAddress) {
+          return `Token deployed at ${tokenAddress}. Tx: ${txHash}.`;
+        }
+        return `Token deployed. Tx: ${txHash}.`;
       }
       case 'deploy_erc721': {
-        return `NFT collection deployed. Address: ${payload.collectionAddress || 'unknown'}. Tx: ${payload.transactionHash || 'unknown'}.`;
+        const collectionAddress = payload.collectionAddress || payload.contractAddress || 'unknown';
+        const txHash = payload.transactionHash || payload.txHash || 'unknown';
+        return `NFT collection deployed. Address: ${collectionAddress}. Tx: ${txHash}.`;
       }
       case 'mint_nft': {
         return `NFT minted. Token ID: ${payload.tokenId || 'unknown'}. Tx: ${payload.transactionHash || 'unknown'}.`;

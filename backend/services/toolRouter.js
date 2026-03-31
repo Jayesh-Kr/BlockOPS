@@ -25,15 +25,15 @@ const AVAILABLE_TOOLS = {
   },
   deploy_erc20: {
     name: 'deploy_erc20',
-    description: 'Deploys a new ERC20 token contract',
-    parameters: ['name', 'symbol', 'decimals', 'initial_supply'],
-    examples: ['Deploy a new token called MyToken', 'Create an ERC20 token', 'Launch a new cryptocurrency']
+    description: 'Deploys a new ERC20 token contract on the selected chain (Flow EVM Testnet or Arbitrum Sepolia).',
+    parameters: ['name', 'symbol', 'decimals', 'initial_supply', 'chain (optional, defaults to request chain)'],
+    examples: ['Deploy a new token called MyToken on Flow', 'Create an ERC20 token on Arbitrum', 'Launch a new cryptocurrency']
   },
   deploy_erc721: {
     name: 'deploy_erc721',
-    description: 'Deploys a new ERC721 NFT collection contract',
-    parameters: ['name', 'symbol', 'base_uri'],
-    examples: ['Deploy an NFT collection', 'Create a new NFT project', 'Launch an NFT collection']
+    description: 'Deploys a new ERC721 NFT collection contract on the selected chain (Flow EVM Testnet or Arbitrum Sepolia).',
+    parameters: ['name', 'symbol', 'base_uri', 'chain (optional, defaults to request chain)'],
+    examples: ['Deploy an NFT collection on Flow', 'Create a new NFT project on Arbitrum', 'Launch an NFT collection']
   },
   mint_nft: {
     name: 'mint_nft',
