@@ -229,7 +229,10 @@ export async function listAgentAuditLogs(
   }
 
   const response = await safeFetch(
-    `${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}/audit-logs?${query.toString()}`
+    `${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}/audit-logs?${query.toString()}`,
+    {
+      headers: getApiKeyHeaders(),
+    }
   )
   const payload = await parseJson(response)
 
@@ -250,7 +253,10 @@ export async function getAgentAuditLogContent(
 ): Promise<AgentAuditLogContent> {
   const query = new URLSearchParams({ userId })
   const response = await safeFetch(
-    `${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}/audit-logs/${encodeURIComponent(logId)}/content?${query.toString()}`
+    `${BLOCKCHAIN_BACKEND_URL}/agents/${encodeURIComponent(agentId)}/audit-logs/${encodeURIComponent(logId)}/content?${query.toString()}`,
+    {
+      headers: getApiKeyHeaders(),
+    }
   )
   const payload = await parseJson(response)
 
