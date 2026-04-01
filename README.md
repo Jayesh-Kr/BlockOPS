@@ -10,9 +10,7 @@ This README covers the product, architecture, setup, and proof links. Track-spec
 | --- | --- |
 | Summary | This README |
 | GitHub | [github.com/Jayesh-Kr/pl-genisis](https://github.com/Jayesh-Kr/pl-genisis) |
-| Live Demo | [blockops.in](https://blockops.in) |
-| Backup Demo | [blockops.vercel.app](https://blockops.vercel.app/) |
-| Demo Video | [Google Drive folder](https://drive.google.com/drive/folders/137-DEv4MkspcmfuAN-ETsxpGMqzmZeZl?usp=sharing) |
+| Demo Video | [Youtube Video](https://youtu.be/iRBJuGIVcus) |
 | Track Documentation | [HACKATHON_TRACKS.md](./HACKATHON_TRACKS.md) |
 | Architecture Diagram | [WORKFLOW_DIAGRAM.md](./WORKFLOW_DIAGRAM.md) |
 
@@ -39,16 +37,16 @@ BlockOps can be positioned for multiple tracks from the same codebase:
 
 | Track | Why It Fits | Supporting Docs |
 | --- | --- | --- |
-| Flow | Consumer DeFi automation on Flow EVM testnet with scheduled savings, payouts, payroll, and wallet-readiness flows | [FLOW_TRACK_FEATURES.md](./FLOW_TRACK_FEATURES.md) |
-| Lit Protocol | Decentralized key management with Lit PKPs on Naga plus Lit Actions for encrypted key handling | [frontend/LIT_PROTOCOL_SETUP.md](./frontend/LIT_PROTOCOL_SETUP.md) |
-| Filecoin | Immutable structured execution logs stored on Filecoin Calibration using Synapse SDK | [backend/AGENT_REGISTRY_FILECOIN_AUDIT_README.md](./backend/AGENT_REGISTRY_FILECOIN_AUDIT_README.md) |
-| No Humans Required / ERC-8004 | Autonomous decision loops, agent identity, manifests, execution logs, and trust-based coordination | [8004.md](./8004.md) |
+| Flow | Consumer DeFi automation on Flow EVM testnet with scheduled savings, payouts, payroll, and wallet-readiness flows | [FLOW_TRACK_FEATURES.md](./docs/FLOW_TRACK_FEATURES.md) |
+| Lit Protocol | Decentralized key management with Lit PKPs on Naga plus Lit Actions for encrypted key handling | [LIT_PROTOCOL_SETUP.md](./frontend/LIT_PROTOCOL_SETUP.md) |
+| Filecoin | Immutable structured execution logs stored on Filecoin Calibration using Synapse SDK | [AGENT_REGISTRY_FILECOIN_AUDIT_README.md](./backend/AGENT_REGISTRY_FILECOIN_AUDIT_README.md) |
+| No Humans Required / ERC-8004 | Autonomous decision loops, agent identity, manifests, execution logs, and trust-based coordination | [8004.md](./docs/8004.md) |
 
-For a track-by-track narrative, demo plan, and submission checklist, use [HACKATHON_TRACKS.md](./HACKATHON_TRACKS.md).
+For a track-by-track narrative, demo plan, and submission checklist, use [HACKATHON_TRACKS.md](./docs/HACKATHON_TRACKS.md).
 
 ## Core Capabilities
 
-| Capability | What Judges See |
+| Capability | Description |
 | --- | --- |
 | AI workflow generation | A user describes a task in natural language and BlockOps selects tools plus execution order |
 | Visual builder | A drag-and-drop canvas for composing multi-step agent workflows |
@@ -72,9 +70,9 @@ For a track-by-track narrative, demo plan, and submission checklist, use [HACKAT
 | Integration | Address / Reference |
 | --- | --- |
 | Payment Escrow | [`0x185eba222e50dedae23a411bbbe5197ed9097381`](https://sepolia.arbiscan.io/address/0x185eba222e50dedae23a411bbbe5197ed9097381) |
-| ERC-8004 Identity Registry | `0x734C984AE7d64aa917D9D2e4B9C08A0CD6C0589B` |
-| ERC-8004 Reputation Registry | `0xa497e1BFe08109D60A8F91AdEc868ffdD1e0055c` |
-| ERC-8004 Validation Registry | `0xFab8731b8d1a978e78086179dC5494F0dbA1f6bE` |
+| ERC-8004 Identity Registry | [`0x734C984AE7d64aa917D9D2e4B9C08A0CD6C0589B`](https://sepolia.arbiscan.io/address/0x734C984AE7d64aa917D9D2e4B9C08A0CD6C0589B) |
+| ERC-8004 Reputation Registry | [`0xa497e1BFe08109D60A8F91AdEc868ffdD1e0055c`](https://sepolia.arbiscan.io/address/0xa497e1BFe08109D60A8F91AdEc868ffdD1e0055c) |
+| ERC-8004 Validation Registry | [`0xFab8731b8d1a978e78086179dC5494F0dbA1f6bE`](https://sepolia.arbiscan.io/address/0xFab8731b8d1a978e78086179dC5494F0dbA1f6bE) |
 
 ## Architecture
 
@@ -197,30 +195,14 @@ Default local URL: `http://localhost:8001`
 
 For Unix-like environments, the repo includes `start-all.sh` and `stop-all.sh`. The helper script keeps the backend on port `3000` and starts the frontend on port `3001`.
 
-## Demo-Ready User Flows
-
-These are the clearest flows to show in a hackathon demo:
-
-1. Create or load an agent wallet.
-2. Ask the agent to perform an onchain task in natural language.
-3. Show the selected tools, execution result, and verification output.
-4. Open the track-specific proof:
-   - Flow scheduling and wallet-readiness
-   - Lit PKP or encrypted-key flow
-   - Filecoin audit log
-   - ERC-8004 registry and trust evidence
 
 ## Documentation Map
 
 | Document | Purpose |
 | --- | --- |
-| [HACKATHON_TRACKS.md](./HACKATHON_TRACKS.md) | Track-by-track submission framing and demo plans |
+| [HACKATHON_TRACKS.md](./docs/HACKATHON_TRACKS.md) | Track-by-track submission framing and demo plans |
 | [FLOW_TRACK_FEATURES.md](./FLOW_TRACK_FEATURES.md) | Flow consumer DeFi positioning |
-| [frontend/LIT_PROTOCOL_SETUP.md](./frontend/LIT_PROTOCOL_SETUP.md) | Lit setup and wallet architecture |
-| [backend/AGENT_REGISTRY_FILECOIN_AUDIT_README.md](./backend/AGENT_REGISTRY_FILECOIN_AUDIT_README.md) | Filecoin audit logging details |
-| [8004.md](./8004.md) | ERC-8004 setup, requirement mapping, and execution model |
-| [WORKFLOW_DIAGRAM.md](./WORKFLOW_DIAGRAM.md) | Architecture and flow diagrams |
-
-## License
-
-MIT
+| [LIT_PROTOCOL_SETUP.md](./frontend/LIT_PROTOCOL_SETUP.md) | Lit setup and wallet architecture |
+| [AGENT_REGISTRY_FILECOIN_AUDIT_README.md](./backend/AGENT_REGISTRY_FILECOIN_AUDIT_README.md) | Filecoin audit logging details |
+| [8004.md](./docs/8004.md) | ERC-8004 setup, requirement mapping, and execution model |
+| [WORKFLOW_DIAGRAM.md](./docs/WORKFLOW_DIAGRAM.md) | Architecture and flow diagrams |
