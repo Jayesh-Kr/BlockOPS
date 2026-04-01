@@ -9,7 +9,7 @@ This README covers the product, architecture, setup, and proof links. Track-spec
 | Item | Link |
 | --- | --- |
 | Summary | This README |
-| GitHub | [github.com/Jayesh-Kr/pl-genisis](https://github.com/Jayesh-Kr/pl-genisis) |
+| GitHub | [github.com/Jayesh-Kr/pl-genisis](https://github.com/Jayesh-Kr/BlockOPs) |
 | Demo Video | [Youtube Video](https://youtu.be/iRBJuGIVcus) |
 | Track Documentation | [HACKATHON_TRACKS.md](./HACKATHON_TRACKS.md) |
 | Architecture Diagram | [WORKFLOW_DIAGRAM.md](./WORKFLOW_DIAGRAM.md) |
