@@ -10,7 +10,7 @@ This README covers the product, architecture, setup, and proof links. Track-spec
 | --- | --- |
 | Summary | This README |
 | GitHub | [github.com/Jayesh-Kr/BlockOPs](https://github.com/Jayesh-Kr/BlockOPs) |
-| Demo Video | [Youtube Video](https://youtu.be/iRBJuGIVcus) |
+| Demo Video | [Youtube Video](https://youtu.be/wi6v1tGWZos) |
 | Track Documentation | [HACKATHON_TRACKS.md](./HACKATHON_TRACKS.md) |
 | Architecture Diagram | [WORKFLOW_DIAGRAM.md](./WORKFLOW_DIAGRAM.md) |
 
